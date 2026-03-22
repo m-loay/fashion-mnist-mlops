@@ -1,101 +1,101 @@
 actual,predicted,count
-T-shirt/top,T-shirt/top,850
+T-shirt/top,T-shirt/top,855
 T-shirt/top,Trouser,2
-T-shirt/top,Pullover,7
-T-shirt/top,Dress,12
-T-shirt/top,Coat,10
-T-shirt/top,Sandal,0
-T-shirt/top,Shirt,116
+T-shirt/top,Pullover,15
+T-shirt/top,Dress,25
+T-shirt/top,Coat,1
+T-shirt/top,Sandal,1
+T-shirt/top,Shirt,91
 T-shirt/top,Sneaker,0
-T-shirt/top,Bag,3
+T-shirt/top,Bag,10
 T-shirt/top,Ankle boot,0
 Trouser,T-shirt/top,3
-Trouser,Trouser,990
-Trouser,Pullover,1
-Trouser,Dress,5
-Trouser,Coat,0
+Trouser,Trouser,969
+Trouser,Pullover,0
+Trouser,Dress,21
+Trouser,Coat,3
 Trouser,Sandal,0
-Trouser,Shirt,1
+Trouser,Shirt,2
 Trouser,Sneaker,0
-Trouser,Bag,0
+Trouser,Bag,2
 Trouser,Ankle boot,0
-Pullover,T-shirt/top,30
-Pullover,Trouser,6
-Pullover,Pullover,733
-Pullover,Dress,5
-Pullover,Coat,135
+Pullover,T-shirt/top,16
+Pullover,Trouser,1
+Pullover,Pullover,794
+Pullover,Dress,9
+Pullover,Coat,114
 Pullover,Sandal,0
-Pullover,Shirt,91
+Pullover,Shirt,63
 Pullover,Sneaker,0
-Pullover,Bag,0
+Pullover,Bag,3
 Pullover,Ankle boot,0
-Dress,T-shirt/top,30
-Dress,Trouser,12
-Dress,Pullover,6
-Dress,Dress,842
-Dress,Coat,57
+Dress,T-shirt/top,34
+Dress,Trouser,6
+Dress,Pullover,10
+Dress,Dress,897
+Dress,Coat,25
 Dress,Sandal,0
-Dress,Shirt,53
+Dress,Shirt,24
 Dress,Sneaker,0
-Dress,Bag,0
+Dress,Bag,4
 Dress,Ankle boot,0
 Coat,T-shirt/top,0
-Coat,Trouser,2
-Coat,Pullover,17
-Coat,Dress,10
-Coat,Coat,905
+Coat,Trouser,0
+Coat,Pullover,98
+Coat,Dress,52
+Coat,Coat,771
 Coat,Sandal,0
-Coat,Shirt,65
+Coat,Shirt,77
 Coat,Sneaker,0
-Coat,Bag,0
-Coat,Ankle boot,1
+Coat,Bag,2
+Coat,Ankle boot,0
 Sandal,T-shirt/top,0
 Sandal,Trouser,0
 Sandal,Pullover,0
 Sandal,Dress,0
 Sandal,Coat,0
-Sandal,Sandal,984
+Sandal,Sandal,953
 Sandal,Shirt,0
-Sandal,Sneaker,15
-Sandal,Bag,0
-Sandal,Ankle boot,1
-Shirt,T-shirt/top,105
-Shirt,Trouser,3
-Shirt,Pullover,24
-Shirt,Dress,14
-Shirt,Coat,80
+Sandal,Sneaker,36
+Sandal,Bag,1
+Sandal,Ankle boot,10
+Shirt,T-shirt/top,161
+Shirt,Trouser,0
+Shirt,Pullover,105
+Shirt,Dress,31
+Shirt,Coat,70
 Shirt,Sandal,0
-Shirt,Shirt,772
+Shirt,Shirt,618
 Shirt,Sneaker,0
-Shirt,Bag,2
+Shirt,Bag,15
 Shirt,Ankle boot,0
 Sneaker,T-shirt/top,0
 Sneaker,Trouser,0
 Sneaker,Pullover,0
 Sneaker,Dress,0
 Sneaker,Coat,0
-Sneaker,Sandal,6
+Sneaker,Sandal,16
 Sneaker,Shirt,0
-Sneaker,Sneaker,979
+Sneaker,Sneaker,962
 Sneaker,Bag,0
-Sneaker,Ankle boot,15
-Bag,T-shirt/top,5
-Bag,Trouser,6
-Bag,Pullover,0
-Bag,Dress,3
-Bag,Coat,4
-Bag,Sandal,6
-Bag,Shirt,13
-Bag,Sneaker,1
-Bag,Bag,962
+Sneaker,Ankle boot,22
+Bag,T-shirt/top,2
+Bag,Trouser,0
+Bag,Pullover,4
+Bag,Dress,4
+Bag,Coat,2
+Bag,Sandal,1
+Bag,Shirt,5
+Bag,Sneaker,4
+Bag,Bag,978
 Bag,Ankle boot,0
 Ankle boot,T-shirt/top,0
 Ankle boot,Trouser,0
 Ankle boot,Pullover,0
 Ankle boot,Dress,0
 Ankle boot,Coat,0
-Ankle boot,Sandal,14
+Ankle boot,Sandal,8
 Ankle boot,Shirt,1
-Ankle boot,Sneaker,38
+Ankle boot,Sneaker,39
 Ankle boot,Bag,0
-Ankle boot,Ankle boot,947
+Ankle boot,Ankle boot,952

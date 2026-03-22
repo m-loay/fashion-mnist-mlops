@@ -56,9 +56,6 @@ stages:
     - train
     outs:
     - models/model.keras
-    plots:
-    - dvclive/plots/metrics:
-        cache: false
 
   evaluate:
     cmd: python src/evaluate.py
