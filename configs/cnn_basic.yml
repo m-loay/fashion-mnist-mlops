@@ -1,0 +1,25 @@
+# Basic CNN — Good default
+# Expected accuracy: ~91%
+# Shows clear improvement over dense baseline
+
+description: "2-layer CNN with max pooling"
+
+layers:
+  - type: conv2d
+    filters: 32
+    kernel_size: [3, 3]
+    activation: relu
+    padding: same
+  - type: max_pool2d
+    pool_size: [2, 2]
+  - type: conv2d
+    filters: 64
+    kernel_size: [3, 3]
+    activation: relu
+    padding: same
+  - type: max_pool2d
+    pool_size: [2, 2]
+  - type: flatten
+  - type: dense
+    units: 128
+    activation: relu

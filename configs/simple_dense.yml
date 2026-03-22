@@ -1,0 +1,16 @@
+# Simple Dense Network — Baseline
+# Expected accuracy: ~87%
+# Use as baseline to show CNN improvement
+
+description: "Flatten + Dense layers only (no convolution)"
+
+layers:
+  - type: flatten
+  - type: dense
+    units: 128
+    activation: relu
+  - type: dropout
+    rate: 0.3
+  - type: dense
+    units: 64
+    activation: relu
