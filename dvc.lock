@@ -90,3 +90,106 @@ stages:
       hash: md5
       md5: 3a1c8fe061fff9607e8da03cbb968a78
       size: 12128
+  train:
+    cmd: python src/train.py
+    deps:
+    - path: configs/cnn_basic.yml
+      hash: md5
+      md5: 3c187a86e8035f84428bb1c8fa2d4482
+      size: 503
+    - path: data/processed/X_train.npy
+      hash: md5
+      md5: f838577d7d5c9fd940e338c8a837bba0
+      size: 150528128
+    - path: data/processed/X_val.npy
+      hash: md5
+      md5: 6632205471b2c5a0946fbf7b2c9e650e
+      size: 37632128
+    - path: data/processed/y_train.npy
+      hash: md5
+      md5: b911232a7c0ead5060f08ac3b7f95733
+      size: 48128
+    - path: data/processed/y_val.npy
+      hash: md5
+      md5: 3a1c8fe061fff9607e8da03cbb968a78
+      size: 12128
+    - path: src/builder.py
+      hash: md5
+      md5: c0da25a5f2bfb1124053b6acf0d09e89
+      size: 5262
+    - path: src/train.py
+      hash: md5
+      md5: b9a52f9be569aea5b30f94498522e115
+      size: 4111
+    params:
+      params.yaml:
+        base.dropout: 0.3
+        base.num_classes: 10
+        base.seed: 42
+        paths.dvclive_dir: dvclive
+        paths.models_dir: models
+        paths.processed_dir: data/processed
+        train:
+          arch_config: configs/cnn_basic.yml
+          epochs: 10
+          batch_size: 64
+          lr: 0.001
+          optimizer: adam
+    outs:
+    - path: dvclive/plots/metrics
+      hash: md5
+      md5: 9b3d6384bf2aedb655fe812584eb5f03.dir
+      size: 941
+      nfiles: 4
+    - path: models/model.keras
+      hash: md5
+      md5: d12b9f433a9140a5aa2bd96ee5e23cb4
+      size: 5103009
+  evaluate:
+    cmd: python src/evaluate.py
+    deps:
+    - path: data/processed/X_test.npy
+      hash: md5
+      md5: 81bcdab3e8c01e3a257fa413f3d4bd4d
+      size: 31360128
+    - path: data/processed/y_test.npy
+      hash: md5
+      md5: e6d24ffff98bc973b3c14df1b4a56631
+      size: 10128
+    - path: models/model.keras
+      hash: md5
+      md5: d12b9f433a9140a5aa2bd96ee5e23cb4
+      size: 5103009
+    - path: src/evaluate.py
+      hash: md5
+      md5: b0d280e443a7d58e92c5d6155c0da989
+      size: 5256
+    params:
+      params.yaml:
+        base.class_names:
+        - T-shirt/top
+        - Trouser
+        - Pullover
+        - Dress
+        - Coat
+        - Sandal
+        - Shirt
+        - Sneaker
+        - Bag
+        - Ankle boot
+        base.num_classes: 10
+        evaluate:
+          save_confusion_matrix: true
+          save_classification_report: true
+        paths.metrics_dir: metrics
+        paths.models_dir: models
+        paths.processed_dir: data/processed
+    outs:
+    - path: metrics/confusion_matrix.csv
+      hash: md5
+      md5: 06f7997d7317461230283860f6cafa42
+      size: 1883
+    - path: metrics/eval.json
+      hash: md5
+      md5: fcce3be5328cbd207d21db65704f3e03
+      size: 134
