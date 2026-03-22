@@ -1,0 +1,86 @@
+stages:
+
+  load_data:
+    cmd: python src/load_data.py
+    deps:
+      - src/load_data.py
+    params:
+      - base.seed
+      - paths.raw_dir
+      - load_data
+    outs:
+      - data/raw/X_train.npy
+      - data/raw/y_train.npy
+      - data/raw/X_test.npy
+      - data/raw/y_test.npy
+
+  preprocess:
+    cmd: python src/preprocess.py
+    deps:
+      - src/preprocess.py
+      - data/raw/X_train.npy
+      - data/raw/y_train.npy
+      - data/raw/X_test.npy
+      - data/raw/y_test.npy
+    params:
+      - base.seed
+      - base.num_classes
+      - paths.raw_dir
+      - paths.processed_dir
+      - preprocess
+    outs:
+      - data/processed/X_train.npy
+      - data/processed/X_val.npy
+      - data/processed/X_test.npy
+      - data/processed/y_train.npy
+      - data/processed/y_val.npy
+      - data/processed/y_test.npy
+
+  train:
+    cmd: python src/train.py
+    deps:
+      - src/train.py
+      - src/builder.py
+      - data/processed/X_train.npy
+      - data/processed/X_val.npy
+      - data/processed/y_train.npy
+      - data/processed/y_val.npy
+      - ${train.arch_config}
+    params:
+      - base.seed
+      - base.dropout
+      - base.num_classes
+      - paths.processed_dir
+      - paths.models_dir
+      - paths.dvclive_dir
+      - train
+    outs:
+      - models/model.keras
+    plots:
+      - dvclive/plots/metrics:
+          cache: false
+      - dvclive/plots/images:
+          cache: false
+
+  evaluate:
+    cmd: python src/evaluate.py
+    deps:
+      - src/evaluate.py
+      - models/model.keras
+      - data/processed/X_test.npy
+      - data/processed/y_test.npy
+    params:
+      - base.num_classes
+      - base.class_names
+      - paths.processed_dir
+      - paths.models_dir
+      - paths.metrics_dir
+      - evaluate
+    metrics:
+      - metrics/eval.json:
+          cache: false
+    plots:
+      - metrics/confusion_matrix.csv:
+          cache: false
+          x: predicted
+          y: actual

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+
+# Data (tracked by DVC, not Git)
+data/processed/
+models/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TensorFlow
+*.h5
+*.pb
+checkpoint
+
+# Misc
+*.log
+.env

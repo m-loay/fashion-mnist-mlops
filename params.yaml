@@ -1,0 +1,56 @@
+# ============================================================
+# params.yaml — DVC-tracked parameters
+# ============================================================
+
+# ── Shared config passed to every stage ──
+base:
+  seed: 42
+  dropout: 0.3
+  num_classes: 10
+  class_names:
+    - T-shirt/top
+    - Trouser
+    - Pullover
+    - Dress
+    - Coat
+    - Sandal
+    - Shirt
+    - Sneaker
+    - Bag
+    - Ankle boot
+
+# ── All paths in one place ──
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  models_dir: models
+  metrics_dir: metrics
+  dvclive_dir: dvclive
+
+# ── Stage: load_data ──
+load_data:
+  # source options: "download" | "local" | "s3"
+  source: download
+  # Used when source=local (path to existing raw data)
+  local_path: null
+  # Used when source=s3
+  s3_uri: null
+
+# ── Stage: preprocess ──
+preprocess:
+  normalize: true
+  flatten: false          # false=keep 2D for CNN, true=flatten for dense
+  validation_split: 0.2
+
+# ── Stage: train ──
+train:
+  arch_config: configs/cnn_basic.yml
+  epochs: 10
+  batch_size: 64
+  lr: 0.001
+  optimizer: adam          # adam | sgd | rmsprop
+
+# ── Stage: evaluate ──
+evaluate:
+  save_confusion_matrix: true
+  save_classification_report: true
