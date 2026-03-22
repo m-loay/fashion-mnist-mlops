@@ -84,47 +84,62 @@ def main():
     )
     model.summary()
 
-    # Train with DVCLive
+    # Train with DVCLive — manual epoch loop for combined plots
     models_dir.mkdir(parents=True, exist_ok=True)
+    epochs = train_params["epochs"]
+    batch_size = train_params["batch_size"]
 
     with Live(dir=str(dvclive_dir), report="html") as live:
         # Log params for DVC Studio columns
         live.log_param("arch_config", str(arch_config))
         live.log_param("arch_name", arch_config.stem)
-        live.log_param("epochs", train_params["epochs"])
-        live.log_param("batch_size", train_params["batch_size"])
+        live.log_param("epochs", epochs)
+        live.log_param("batch_size", batch_size)
         live.log_param("lr", train_params["lr"])
         live.log_param("optimizer", train_params["optimizer"])
         live.log_param("dropout", dropout)
         live.log_param("total_params", model.count_params())
         live.log_param("seed", seed)
 
-        # Train
-        history = model.fit(
-            X_train,
-            y_train,
-            validation_data=(X_val, y_val),
-            epochs=train_params["epochs"],
-            batch_size=train_params["batch_size"],
-            callbacks=[DVCLiveCallback(live=live)],
-            verbose=1,
-        )
+        # Train epoch by epoch — log train + val on same step
+        history = None
+        for epoch in range(epochs):
+            print(f"\nEpoch {epoch + 1}/{epochs}")
+            history = model.fit(
+                X_train,
+                y_train,
+                validation_data=(X_val, y_val),
+                epochs=1,
+                batch_size=batch_size,
+                verbose=1,
+            )
 
-        # Log final metrics
-        final = {
-            "final_train_accuracy": round(history.history["accuracy"][-1], 4),
-            "final_val_accuracy": round(history.history["val_accuracy"][-1], 4),
-            "final_train_loss": round(history.history["loss"][-1], 4),
-            "final_val_loss": round(history.history["val_loss"][-1], 4),
-        }
-        for key, value in final.items():
-            live.summary[key] = value
+            # Same prefix → same graph in DVC plots
+            live.log_metric("loss/train", history.history["loss"][0])
+            live.log_metric("loss/val", history.history["val_loss"][0])
+            live.log_metric("accuracy/train", history.history["accuracy"][0])
+            live.log_metric("accuracy/val", history.history["val_accuracy"][0])
+            live.next_step()
+
+        # Final summary metrics
+        if history is not None:
+            final_train_acc = history.history["accuracy"][-1]
+            final_val_acc = history.history["val_accuracy"][-1]
+            final_train_loss = history.history["loss"][-1]
+            final_val_loss = history.history["val_loss"][-1]
+        else:
+            final_train_acc = final_val_acc = final_train_loss = final_val_loss = 0.0
+
+        live.summary["final_train_accuracy"] = round(final_train_acc, 4)
+        live.summary["final_val_accuracy"] = round(final_val_acc, 4)
+        live.summary["final_train_loss"] = round(final_train_loss, 4)
+        live.summary["final_val_loss"] = round(final_val_loss, 4)
 
     # Save model
     model_path = models_dir / "model.keras"
     model.save(model_path)
     print(f"\nModel saved to {model_path}")
-    print(f"Training complete: val_accuracy={final['final_val_accuracy']}")
+    print(f"Training complete: val_accuracy={final_val_acc:.4f}")
     print("DONE\n")
 
 

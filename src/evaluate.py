@@ -29,20 +29,13 @@ from sklearn.metrics import (
 from config import load_config
 
 
-def save_confusion_matrix_csv(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    class_names: list[str],
-    path: Path,
-) -> None:
+def save_confusion_matrix_csv(y_true, y_pred, class_names, path):
     """Save confusion matrix as CSV for DVC Studio plotting."""
-    cm = confusion_matrix(y_true, y_pred)
     rows = []
-    for i, actual in enumerate(class_names):
-        for j, predicted in enumerate(class_names):
-            rows.append(f"{actual},{predicted},{cm[i][j]}")
+    for true_label, pred_label in zip(y_true, y_pred):
+        rows.append(f"{class_names[true_label]},{class_names[pred_label]}")
 
-    path.write_text("actual,predicted,count\n" + "\n".join(rows))
+    path.write_text("actual,predicted\n" + "\n".join(rows))
     print(f"Saved {path}")
 
 
@@ -54,6 +47,7 @@ def save_confusion_matrix_plot(
 ) -> None:
     """Save confusion matrix as PNG image."""
     import matplotlib
+
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
@@ -66,9 +60,12 @@ def save_confusion_matrix_plot(
 
     n = len(class_names)
     ax.set(
-        xticks=np.arange(n), yticks=np.arange(n),
-        xticklabels=class_names, yticklabels=class_names,
-        ylabel="True label", xlabel="Predicted label",
+        xticks=np.arange(n),
+        yticks=np.arange(n),
+        xticklabels=class_names,
+        yticklabels=class_names,
+        ylabel="True label",
+        xlabel="Predicted label",
         title="Confusion Matrix (normalized)",
     )
     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
@@ -77,8 +74,11 @@ def save_confusion_matrix_plot(
     for i in range(n):
         for j in range(n):
             ax.text(
-                j, i, f"{cm_norm[i, j]:.2f}",
-                ha="center", va="center",
+                j,
+                i,
+                f"{cm_norm[i, j]:.2f}",
+                ha="center",
+                va="center",
                 color="white" if cm_norm[i, j] > thresh else "black",
                 fontsize=7,
             )
@@ -156,7 +156,8 @@ def main():
     # Classification report
     if eval_params.get("save_classification_report", True):
         report = classification_report(
-            y_test, y_pred,
+            y_test,
+            y_pred,
             target_names=class_names,
             output_dict=True,
         )

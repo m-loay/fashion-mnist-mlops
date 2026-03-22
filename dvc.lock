@@ -93,10 +93,10 @@ stages:
   train:
     cmd: python src/train.py
     deps:
-    - path: configs/cnn_dropout.yml
+    - path: configs/simple_dense.yml
       hash: md5
-      md5: 29013a3d2871e1b1feab319ee62e1ac4
-      size: 800
+      md5: ed2f11c8a9c368e40bb42d25a5d6b733
+      size: 327
     - path: data/processed/X_train.npy
       hash: md5
       md5: f838577d7d5c9fd940e338c8a837bba0
@@ -119,8 +119,8 @@ stages:
       size: 5262
     - path: src/train.py
       hash: md5
-      md5: b9a52f9be569aea5b30f94498522e115
-      size: 4111
+      md5: 362cb88e2e1a7b62a8d8f8f30e1635c6
+      size: 4925
     params:
       params.yaml:
         base.dropout: 0.3
@@ -130,7 +130,7 @@ stages:
         paths.models_dir: models
         paths.processed_dir: data/processed
         train:
-          arch_config: configs/cnn_dropout.yml
+          arch_config: configs/simple_dense.yml
           epochs: 10
           batch_size: 64
           lr: 0.001
@@ -138,8 +138,8 @@ stages:
     outs:
     - path: models/model.keras
       hash: md5
-      md5: d96106f043dbf78a99f557cbc497dcd9
-      size: 1498859
+      md5: 55fed9bb823a8a79841f11ce38a58ab9
+      size: 1347766
   evaluate:
     cmd: python src/evaluate.py
     deps:
@@ -153,12 +153,12 @@ stages:
       size: 10128
     - path: models/model.keras
       hash: md5
-      md5: d96106f043dbf78a99f557cbc497dcd9
-      size: 1498859
+      md5: 55fed9bb823a8a79841f11ce38a58ab9
+      size: 1347766
     - path: src/evaluate.py
       hash: md5
-      md5: b0d280e443a7d58e92c5d6155c0da989
-      size: 5256
+      md5: a99fa218969ec65aba5fbdfba778d0db
+      size: 5199
     params:
       params.yaml:
         base.class_names:
@@ -182,9 +182,9 @@ stages:
     outs:
     - path: metrics/confusion_matrix.csv
       hash: md5
-      md5: 4859d2e151c307730364df457a89810e
-      size: 1887
+      md5: d85efeda1f0d93cc66ba47a599985f82
+      size: 162175
     - path: metrics/eval.json
       hash: md5
-      md5: dc77dd15bfed1cafedcc2848b3e475f0
-      size: 132
+      md5: 3f81a9fb403a8c49546542bcf4d4e9da
+      size: 134

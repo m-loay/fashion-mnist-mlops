@@ -1,7 +1,7 @@
 {
-  "test_accuracy": 0.8891,
-  "test_f1": 0.89,
-  "test_precision": 0.8958,
-  "test_recall": 0.8891,
+  "test_accuracy": 0.8756,
+  "test_f1": 0.8745,
+  "test_precision": 0.8742,
+  "test_recall": 0.8756,
   "test_samples": 10000
 }
