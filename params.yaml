@@ -42,7 +42,7 @@ preprocess:
 
 # ── Stage: train ──
 train:
-  arch_config: configs/cnn_basic.yml
+  arch_config: configs/cnn_dropout.yml
   epochs: 10
   batch_size: 64
   lr: 0.001
