@@ -5,8 +5,8 @@ stages:
     deps:
     - path: src/load_data.py
       hash: md5
-      md5: 29030551094995d3e711c750a91b1080
-      size: 3494
+      md5: 909de2b4d4bca2a4a0e0dd6f7f50a6e1
+      size: 3523
     params:
       params.yaml:
         base.seed: 42
@@ -32,3 +32,61 @@ stages:
       hash: md5
       md5: 2d0fed45dac68b413b0442c431eb4cd0
       size: 60128
+  preprocess:
+    cmd: python src/preprocess.py
+    deps:
+    - path: data/raw/X_test.npy
+      hash: md5
+      md5: 4156b9580740fd6c4b4d9e769559ff1f
+      size: 7840128
+    - path: data/raw/X_train.npy
+      hash: md5
+      md5: ae10a82bc1b876b714fcf03a1b657f7c
+      size: 47040128
+    - path: data/raw/y_test.npy
+      hash: md5
+      md5: e6d24ffff98bc973b3c14df1b4a56631
+      size: 10128
+    - path: data/raw/y_train.npy
+      hash: md5
+      md5: 2d0fed45dac68b413b0442c431eb4cd0
+      size: 60128
+    - path: src/preprocess.py
+      hash: md5
+      md5: 44fe887d3b2088be6f093ca871fae25b
+      size: 3120
+    params:
+      params.yaml:
+        base.num_classes: 10
+        base.seed: 42
+        paths.processed_dir: data/processed
+        paths.raw_dir: data/raw
+        preprocess:
+          normalize: true
+          flatten: false
+          validation_split: 0.2
+    outs:
+    - path: data/processed/X_test.npy
+      hash: md5
+      md5: 81bcdab3e8c01e3a257fa413f3d4bd4d
+      size: 31360128
+    - path: data/processed/X_train.npy
+      hash: md5
+      md5: f838577d7d5c9fd940e338c8a837bba0
+      size: 150528128
+    - path: data/processed/X_val.npy
+      hash: md5
+      md5: 6632205471b2c5a0946fbf7b2c9e650e
+      size: 37632128
+    - path: data/processed/y_test.npy
+      hash: md5
+      md5: e6d24ffff98bc973b3c14df1b4a56631
+      size: 10128
+    - path: data/processed/y_train.npy
+      hash: md5
+      md5: b911232a7c0ead5060f08ac3b7f95733
+      size: 48128
+    - path: data/processed/y_val.npy
+      hash: md5
+      md5: 3a1c8fe061fff9607e8da03cbb968a78
+      size: 12128

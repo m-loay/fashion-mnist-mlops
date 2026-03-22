@@ -81,6 +81,7 @@ def _save_raw(
 
 
 def main():
+    # load config and params
     cfg = load_config()
     params = cfg.stage("load_data")
     raw_dir = cfg.paths["raw_dir"]
