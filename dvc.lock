@@ -93,10 +93,10 @@ stages:
   train:
     cmd: python src/train.py
     deps:
-    - path: configs/cnn_basic.yml
+    - path: configs/cnn_dropout.yml
       hash: md5
-      md5: 3c187a86e8035f84428bb1c8fa2d4482
-      size: 503
+      md5: 29013a3d2871e1b1feab319ee62e1ac4
+      size: 800
     - path: data/processed/X_train.npy
       hash: md5
       md5: f838577d7d5c9fd940e338c8a837bba0
@@ -130,7 +130,7 @@ stages:
         paths.models_dir: models
         paths.processed_dir: data/processed
         train:
-          arch_config: configs/cnn_basic.yml
+          arch_config: configs/cnn_dropout.yml
           epochs: 10
           batch_size: 64
           lr: 0.001
@@ -138,8 +138,8 @@ stages:
     outs:
     - path: models/model.keras
       hash: md5
-      md5: 91bac12d8a70fbd7657bf2556cab1d77
-      size: 5103009
+      md5: d96106f043dbf78a99f557cbc497dcd9
+      size: 1498859
   evaluate:
     cmd: python src/evaluate.py
     deps:
@@ -153,8 +153,8 @@ stages:
       size: 10128
     - path: models/model.keras
       hash: md5
-      md5: 91bac12d8a70fbd7657bf2556cab1d77
-      size: 5103009
+      md5: d96106f043dbf78a99f557cbc497dcd9
+      size: 1498859
     - path: src/evaluate.py
       hash: md5
       md5: b0d280e443a7d58e92c5d6155c0da989
@@ -182,9 +182,9 @@ stages:
     outs:
     - path: metrics/confusion_matrix.csv
       hash: md5
-      md5: 9a014e53200a56eb9fac677ca37d3a4d
-      size: 1884
+      md5: 4859d2e151c307730364df457a89810e
+      size: 1887
     - path: metrics/eval.json
       hash: md5
-      md5: 210c945624f06a01e0c32b419f0c2914
-      size: 134
+      md5: dc77dd15bfed1cafedcc2848b3e475f0
+      size: 132
