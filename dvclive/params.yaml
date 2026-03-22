@@ -1,9 +1,9 @@
-arch_config: configs\cnn_basic.yml
-arch_name: cnn_basic
+arch_config: configs\simple_dense.yml
+arch_name: simple_dense
 epochs: 10
 batch_size: 64
 lr: 0.001
 optimizer: adam
 dropout: 0.3
-total_params: 421642
+total_params: 109386
 seed: 42

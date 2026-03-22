@@ -8,18 +8,16 @@ base:
   dropout: 0.3
   num_classes: 10
   class_names:
-    - T-shirt/top
-    - Trouser
-    - Pullover
-    - Dress
-    - Coat
-    - Sandal
-    - Shirt
-    - Sneaker
-    - Bag
-    - Ankle boot
-
-# ── All paths in one place ──
+  - T-shirt/top
+  - Trouser
+  - Pullover
+  - Dress
+  - Coat
+  - Sandal
+  - Shirt
+  - Sneaker
+  - Bag
+  - Ankle boot
 paths:
   raw_dir: data/raw
   processed_dir: data/processed
@@ -32,9 +30,9 @@ load_data:
   # source options: "download" | "local" | "s3"
   source: download
   # Used when source=local (path to existing raw data)
-  local_path: null
+  local_path:
   # Used when source=s3
-  s3_uri: null
+  s3_uri:
 
 # ── Stage: preprocess ──
 preprocess:
@@ -44,7 +42,7 @@ preprocess:
 
 # ── Stage: train ──
 train:
-  arch_config: configs/cnn_basic.yml
+  arch_config: configs/simple_dense.yml
   epochs: 10
   batch_size: 64
   lr: 0.001
