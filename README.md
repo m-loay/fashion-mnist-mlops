@@ -136,17 +136,3 @@ dvc remote modify s3remote region eu-north-1
 # Push data and models
 dvc push
 ```
-
-## Transferring to Radar ML Project
-
-This pipeline is designed as a template. To adapt for radar:
-
-| This project | Radar project |
-|-------------|--------------|
-| Fashion MNIST images | Acconeer .h5 IQ data |
-| `input_shape: (28, 28, 1)` | `input_shape: (40, 4, 3)` |
-| 10 classes (clothing) | 3 classes (empty/occupied/child) |
-| `preprocess.py` (normalize images) | `preprocess.py` (sliding window + IQ extraction) |
-| Same `builder.py` | Same `builder.py` |
-| Same `dvc.yaml` structure | Same `dvc.yaml` structure |
-| Same `params.yaml` pattern | Same `params.yaml` pattern |
