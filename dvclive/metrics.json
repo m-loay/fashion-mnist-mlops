@@ -1,15 +1,15 @@
 {
     "train": {
-        "accuracy": 0.875333309173584,
-        "loss": 0.34218400716781616
+        "accuracy": 0.9427083134651184,
+        "loss": 0.16172809898853302
     },
     "eval": {
-        "accuracy": 0.8792499899864197,
-        "loss": 0.33250975608825684
+        "accuracy": 0.9047499895095825,
+        "loss": 0.29657402634620667
     },
     "step": 9,
-    "final_train_accuracy": 0.8753,
-    "final_val_accuracy": 0.8792,
-    "final_train_loss": 0.3422,
-    "final_val_loss": 0.3325
+    "final_train_accuracy": 0.9427,
+    "final_val_accuracy": 0.9047,
+    "final_train_loss": 0.1617,
+    "final_val_loss": 0.2966
 }
