@@ -1,15 +1,15 @@
 {
     "loss": {
-        "train": 0.15977466106414795,
-        "val": 0.4717522859573364
+        "train": 0.16091297566890717,
+        "val": 0.31277817487716675
     },
     "accuracy": {
-        "train": 0.9431666731834412,
-        "val": 0.8521666526794434
+        "train": 0.9430416822433472,
+        "val": 0.9056666493415833
     },
     "step": 9,
-    "final_train_accuracy": 0.9432,
-    "final_val_accuracy": 0.8522,
-    "final_train_loss": 0.1598,
-    "final_val_loss": 0.4718
+    "final_train_accuracy": 0.943,
+    "final_val_accuracy": 0.9057,
+    "final_train_loss": 0.1609,
+    "final_val_loss": 0.3128
 }
