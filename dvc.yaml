@@ -80,11 +80,11 @@ stages:
         y: actual
         cache: false
     - metrics/confusion_matrix.png:
-        cache: true
+        cache: false
     - metrics/accuracy_curve.png:
-        cache: true
+        cache: false
     - metrics/loss_curve.png:
-        cache: true
+        cache: false
 
 # These top-level sections are only needed for files NOT produced by stages.
 # Since your stages already define them, I've cleaned these up.
