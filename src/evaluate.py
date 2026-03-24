@@ -16,6 +16,7 @@ Produces:
 import json
 import numpy as np
 import tensorflow as tf
+import pandas as pd
 from pathlib import Path
 from sklearn.metrics import (
     accuracy_score,
@@ -25,6 +26,10 @@ from sklearn.metrics import (
     confusion_matrix,
     classification_report,
 )
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 from config import load_config
 
@@ -46,10 +51,6 @@ def save_confusion_matrix_plot(
     path: Path,
 ) -> None:
     """Save confusion matrix as PNG image."""
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
 
     cm = confusion_matrix(y_true, y_pred)
     cm_norm = cm.astype("float") / cm.sum(axis=1)[:, np.newaxis]
@@ -87,6 +88,59 @@ def save_confusion_matrix_plot(
     plt.savefig(path, dpi=120, bbox_inches="tight")
     plt.close()
     print(f"Saved {path}")
+
+
+def save_curve(train_tsv: Path, val_tsv: Path, output_path: Path, metric_name: str) -> None:
+    """
+    Read DVCLive-style train/val TSV files and save one combined curve plot.
+
+    Expected TSV format:
+    - train.tsv: columns like [step, train]
+    - val.tsv:   columns like [step, val]
+
+    Args:
+        train_tsv: Path to train.tsv
+        val_tsv: Path to val.tsv
+        output_path: Full path of output image, e.g. Path("plots/loss_curve.png")
+        metric_name: Name shown in title/y-axis, e.g. "loss" or "accuracy"
+    """
+    output_path = Path(output_path) / f"{metric_name}_curve.png"
+
+    if not train_tsv.exists():
+        raise FileNotFoundError(f"Train TSV not found: {train_tsv}")
+    if not val_tsv.exists():
+        raise FileNotFoundError(f"Val TSV not found: {val_tsv}")
+
+    train_df = pd.read_csv(train_tsv, sep="\t")
+    val_df = pd.read_csv(val_tsv, sep="\t")
+
+    required_train_cols = {"step", "train"}
+    required_val_cols = {"step", "val"}
+
+    if not required_train_cols.issubset(train_df.columns):
+        raise ValueError(
+            f"{train_tsv} must contain columns {required_train_cols}, "
+            f"but got {set(train_df.columns)}"
+        )
+    if not required_val_cols.issubset(val_df.columns):
+        raise ValueError(
+            f"{val_tsv} must contain columns {required_val_cols}, " f"but got {set(val_df.columns)}"
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(train_df["step"], train_df["train"], marker="o", label=f"{metric_name}/train")
+    plt.plot(val_df["step"], val_df["val"], marker="o", label=f"{metric_name}/val")
+
+    plt.xlabel("Epoch")
+    plt.ylabel(metric_name.capitalize())
+    plt.title(f"{metric_name.capitalize()} Curve")
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
 
 
 def main():
@@ -169,6 +223,15 @@ def main():
         for name in class_names:
             if name in report:
                 print(f"  {name:15s}: {report[name]['f1-score']:.3f}")
+    # save plots for loss
+    train_tsv = Path("dvclive/plots/metrics/loss/train.tsv").resolve()
+    val_tsv = Path("dvclive/plots/metrics/loss/val.tsv").resolve()
+    save_curve(train_tsv, val_tsv, metrics_dir, metric_name="loss")
+
+    # save plots for accuracy
+    train_tsv = Path("dvclive/plots/metrics/accuracy/train.tsv").resolve()
+    val_tsv = Path("dvclive/plots/metrics/accuracy/val.tsv").resolve()
+    save_curve(train_tsv, val_tsv, metrics_dir, metric_name="accuracy")
 
     print("\nDONE\n")
 

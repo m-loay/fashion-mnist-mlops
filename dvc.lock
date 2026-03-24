@@ -5,8 +5,8 @@ stages:
     deps:
     - path: src/load_data.py
       hash: md5
-      md5: 293cbd2af9783c347f3e3bc8de4e8739
-      size: 3639
+      md5: 909de2b4d4bca2a4a0e0dd6f7f50a6e1
+      size: 3523
     params:
       params.yaml:
         base.seed: 42
@@ -53,8 +53,8 @@ stages:
       size: 60128
     - path: src/preprocess.py
       hash: md5
-      md5: 275c56df452fa3b50cf29a3cca0113ee
-      size: 3228
+      md5: 44fe887d3b2088be6f093ca871fae25b
+      size: 3120
     params:
       params.yaml:
         base.num_classes: 10
@@ -93,10 +93,10 @@ stages:
   train:
     cmd: python src/train.py
     deps:
-    - path: configs/simple_dense.yml
+    - path: configs/cnn_basic.yml
       hash: md5
-      md5: 4bb14a6b20637dbeb03ac15af6748b35
-      size: 343
+      md5: 3c187a86e8035f84428bb1c8fa2d4482
+      size: 503
     - path: data/processed/X_train.npy
       hash: md5
       md5: f838577d7d5c9fd940e338c8a837bba0
@@ -115,12 +115,12 @@ stages:
       size: 12128
     - path: src/builder.py
       hash: md5
-      md5: 72fd0f15560f6ee0b0ce35ae90903005
-      size: 5440
+      md5: c0da25a5f2bfb1124053b6acf0d09e89
+      size: 5262
     - path: src/train.py
       hash: md5
-      md5: 6e6e231a0c0f00a53607e399a1c41d1e
-      size: 5072
+      md5: 362cb88e2e1a7b62a8d8f8f30e1635c6
+      size: 4925
     params:
       params.yaml:
         base.dropout: 0.3
@@ -130,7 +130,7 @@ stages:
         paths.models_dir: models
         paths.processed_dir: data/processed
         train:
-          arch_config: configs/simple_dense.yml
+          arch_config: configs/cnn_basic.yml
           epochs: 10
           batch_size: 64
           lr: 0.001
@@ -138,8 +138,8 @@ stages:
     outs:
     - path: models/model.keras
       hash: md5
-      md5: b410fd7355bfdb82ac4c644c926e0211
-      size: 1347766
+      md5: ce296ba4b724ede7939349d45bf456a3
+      size: 5103022
   evaluate:
     cmd: python src/evaluate.py
     deps:
@@ -153,12 +153,12 @@ stages:
       size: 10128
     - path: models/model.keras
       hash: md5
-      md5: 89bb3a977dcde998b9a2dba003714ff5
-      size: 1347766
+      md5: ce296ba4b724ede7939349d45bf456a3
+      size: 5103022
     - path: src/evaluate.py
       hash: md5
-      md5: 6acf9d583774275ec5e700c029433dfd
-      size: 5376
+      md5: 3f8fbe7ee706f3c79fdcb07480a66ed5
+      size: 7600
     params:
       params.yaml:
         base.class_names:
@@ -180,15 +180,23 @@ stages:
         paths.models_dir: models
         paths.processed_dir: data/processed
     outs:
+    - path: metrics/accuracy_curve.png
+      hash: md5
+      md5: 796fe36d7cd9533b53f3de70ea8a01f2
+      size: 130153
     - path: metrics/confusion_matrix.csv
       hash: md5
-      md5: 5c462f305e80be786f556fa3ccd3ed1d
-      size: 162759
+      md5: b7988b75091df243b85938ebb16e6c1c
+      size: 153050
     - path: metrics/confusion_matrix.png
       hash: md5
-      md5: d0454e1c0e7c0f338d4bcab124eec515
-      size: 75553
+      md5: 5cea7188da387087913367a5d0c57330
+      size: 83051
     - path: metrics/eval.json
       hash: md5
-      md5: fdb5a488d12909e036984fbfd1f80f80
-      size: 131
+      md5: 4e623fd9d9a4e6439e6bd736d1726199
+      size: 128
+    - path: metrics/loss_curve.png
+      hash: md5
+      md5: 129f61b6cec667fbbcdbaed01be2d816
+      size: 127330

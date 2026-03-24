@@ -79,8 +79,12 @@ stages:
         x: predicted
         y: actual
         cache: false
-    - metrics/confusion_matrix.png:   # Added colon here
-        cache: true   # Changed to true so DVC handles the binary, not Git
+    - metrics/confusion_matrix.png:   
+        cache: true   
+    - metrics/accuracy_curve.png:
+        cache: true   
+    - metrics/loss_curve.png:
+        cache: true  
 
 # These top-level sections are only needed for files NOT produced by stages.
 # Since your stages already define them, I've cleaned these up.
