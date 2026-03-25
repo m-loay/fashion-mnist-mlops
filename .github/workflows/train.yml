@@ -71,6 +71,11 @@ jobs:
 
       - uses: iterative/setup-cml@v3
 
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.7"
+
       - name: Launch CML EC2 spot runner
         env:
           REPO_TOKEN: ${{ secrets.CML_PAT }}
