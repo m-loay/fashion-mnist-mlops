@@ -54,12 +54,12 @@ on:
       instance_type:
         description: "EC2 instance type"
         type: choice
-        default: "t3.medium"
+        default: "t3.small"
         options:
-          - t3.medium      # 2 vCPU  4 GB  — default, cheapest viable
-          - t3.large       # 2 vCPU  8 GB
-          - t3.xlarge      # 4 vCPU 16 GB
-          - g4dn.xlarge    # 4 vCPU 16 GB + T4 GPU
+          - t3.small       # 2 vCPU  2 GB  — default, free-tier eligible
+          - t3.micro       # 2 vCPU  1 GB  — free-tier, may OOM on training
+          - t4g.small      # 2 vCPU  2 GB  — free-tier, ARM-based
+          - t4g.micro      # 2 vCPU  1 GB  — free-tier, ARM-based
 
 # =============================================================
 # Job 1 — provision EC2 runner
@@ -88,10 +88,10 @@ jobs:
           mode:              start
           github-token:      ${{ secrets.CML_PAT }}
           ec2-image-id:      ami-0028809abe98af413
-          ec2-instance-type: ${{ inputs.instance_type || 't3.medium' }}
+          ec2-instance-type: ${{ inputs.instance_type || 't3.small' }}
           subnet-id:         ${{ secrets.AWS_SUBNET_ID }}
           security-group-id: ${{ secrets.AWS_SECURITY_GROUP_ID }}
-          spot:              true
+          market-type:       spot
 
 # =============================================================
 # Job 2 — run DVC pipeline on the EC2 runner
