@@ -29,6 +29,9 @@
 
 name: ML Pipeline
 
+permissions:
+  contents: write
+
 on:
   push:
     branches:
@@ -58,8 +61,6 @@ on:
         options:
           - t3.small       # 2 vCPU  2 GB  — default, free-tier eligible
           - t3.micro       # 2 vCPU  1 GB  — free-tier, may OOM on training
-          - t4g.small      # 2 vCPU  2 GB  — free-tier, ARM-based
-          - t4g.micro      # 2 vCPU  1 GB  — free-tier, ARM-based
 
 # =============================================================
 # Job 1 — provision EC2 runner
@@ -92,6 +93,11 @@ jobs:
           subnet-id:         ${{ secrets.AWS_SUBNET_ID }}
           security-group-id: ${{ secrets.AWS_SECURITY_GROUP_ID }}
           market-type:       spot
+          pre-runner-script: |
+            sudo apt-get update -y
+            sudo apt-get install -y docker.io
+            sudo systemctl start docker
+            sudo usermod -aG docker ubuntu
 
 # =============================================================
 # Job 2 — run DVC pipeline on the EC2 runner
@@ -109,6 +115,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # ── Enforce Python 3.12 ─────────────────────────────────
       # requirements.txt is tested and works on Python 3.12.
@@ -228,14 +236,14 @@ jobs:
       # ── Build and post CML report ───────────────────────────
       - name: Post CML report
         env:
-          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_TOKEN: ${{ secrets.CML_PAT }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           # ── Header ──
           echo "## ML Pipeline Report" >> report.md
           echo "" >> report.md
-          echo "**Runner:** EC2 \`${{ inputs.instance_type || 't3.medium' }}\` spot (eu-north-1)" >> report.md
+          echo "**Runner:** EC2 \`${{ inputs.instance_type || 't3.small' }}\` spot (eu-north-1)" >> report.md
           echo "" >> report.md
 
           # ── Accuracy summary table ──
@@ -299,7 +307,7 @@ jobs:
   stop-runner:
     needs: [start-runner, train]
     runs-on: ubuntu-latest
-    if: always()
+    if: ${{ always() && needs.start-runner.result == 'success' }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
