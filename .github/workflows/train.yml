@@ -14,17 +14,13 @@
 #   AWS_SECURITY_GROUP_ID
 #   CML_PAT
 #
-# CONTAINER:
-#   ghcr.io/iterative/cml:0-dvc3-base1
-#   Matches dvc[s3]==3.59.2 + dvclive==3.48.1 from requirements.txt.
-#   Pre-installed: CML, DVC 3.x, Python, Git.
-#   pip install -r requirements.txt pins the exact versions on top.
-#
 # DESIGN:
 #   Job 1 (start-runner): provisions an EC2 spot runner in eu-north-1
-#   Job 2 (train): runs inside the container on that EC2 instance.
-#                  dvc repro is where actual training happens.
-#   Job 3 (stop-runner): terminates the EC2 instance after train.
+#                         No pre-runner-script → fast registration (<90s)
+#   Job 2 (train):        runs DIRECTLY on the EC2 instance (no container).
+#                         Python 3.12 + DVC + CML installed in job steps.
+#   Job 3 (stop-runner):  terminates EC2 after train completes or fails.
+#
 # =============================================================
 
 name: ML Pipeline
@@ -64,9 +60,8 @@ on:
 
 # =============================================================
 # Job 1 — provision EC2 runner
-# Runs on free GitHub-hosted runner.
-# Launches a spot EC2 and registers it with GitHub Actions.
-# Job 2 is then routed to that EC2 instance.
+# Bare Ubuntu 22.04 AMI — no pre-runner-script needed.
+# Instance boots and registers with GitHub in under 90 seconds.
 # =============================================================
 jobs:
   start-runner:
@@ -93,74 +88,65 @@ jobs:
           subnet-id:         ${{ secrets.AWS_SUBNET_ID }}
           security-group-id: ${{ secrets.AWS_SECURITY_GROUP_ID }}
           market-type:       spot
-          pre-runner-script: |
-            sudo apt-get update -y
-            sudo apt-get install -y docker.io
-            sudo systemctl start docker
-            sudo usermod -aG docker ubuntu
 
 # =============================================================
-# Job 2 — run DVC pipeline on the EC2 runner
-#
-# runs-on: runner-label from Job 1  → routes to the EC2 instance
-#
-# dvc repro → actual training runs here on EC2, inside container
+# Job 2 — run DVC pipeline directly on the EC2 runner
+# No container — Python 3.12, DVC, CML installed in steps.
 # =============================================================
   train:
     needs: start-runner
     runs-on: ${{ needs.start-runner.outputs.runner-label }}
     timeout-minutes: 90
-    container:
-      image: ghcr.io/iterative/cml:0-dvc3-base1
+
+    env:
+      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION:    eu-north-1
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # ── Enforce Python 3.12 ─────────────────────────────────
-      # requirements.txt is tested and works on Python 3.12.
-      # The CML base image ships with an older Python — install
-      # 3.12 explicitly so the environment always matches.
+      # ── Python 3.12 ─────────────────────────────────────────
+      # Ubuntu 22.04 ships Python 3.10. Install 3.12 via deadsnakes.
+      # This runs after registration so there is no timeout risk.
       - name: Set up Python 3.12
         run: |
-          apt-get update -y
-          apt-get install -y python3.12 python3.12-venv python3.12-dev
-          update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
+          sudo apt-get update -y -q
+          sudo apt-get install -y -q software-properties-common
+          sudo add-apt-repository -y ppa:deadsnakes/ppa
+          sudo apt-get update -y -q
+          sudo apt-get install -y -q python3.12 python3.12-venv python3.12-dev python3.12-distutils
+          sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
           curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
           python3 --version
 
-      # ── Pin exact versions from requirements.txt ────────────
+      # ── Dependencies (includes DVC, DVCLive, CML) ───────────
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ── Pull cached data + models from S3 ──────────────────
-      # dvc pull fetches whatever stages are already cached in S3,
-      # so the pipeline only re-runs stages that actually changed.
+      # ── CML (for PR reporting) ───────────────────────────────
+      - name: Setup CML
+        uses: iterative/setup-cml@v3
+
+      # ── Pull cached data + models from S3 ───────────────────
       - name: DVC pull from S3
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           dvc remote modify s3remote region eu-north-1
           dvc pull --run-cache
 
-      # ── Run the full pipeline on EC2 ────────────────────────
+      # ── Run the full pipeline ────────────────────────────────
       # Stages: load_data → preprocess → train → evaluate
       # Only changed stages re-run (DVC caching).
       - name: DVC repro
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: dvc repro
 
       # ── Push updated outputs back to S3 ─────────────────────
       - name: DVC push to S3
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: dvc push
 
       # ── Commit dvc.lock + metrics back to git ───────────────
@@ -196,7 +182,6 @@ jobs:
               train_loss = get(live, "train_loss",       "loss")
               val_acc    = get(live, "val_accuracy")
               val_loss   = get(live, "val_loss")
-              # also try nested: live["train"]["accuracy"]
               if train_acc == "N/A" and "train" in live:
                   train_acc  = live["train"].get("accuracy",  "N/A")
                   train_loss = live["train"].get("loss",      "N/A")
@@ -233,14 +218,12 @@ jobs:
           print(f"test   acc={test_acc}   f1={test_f1}")
           PYEOF
 
-      # ── Build and post CML report ───────────────────────────
+      # ── Build and post CML report ────────────────────────────
       - name: Post CML report
+        if: always()
         env:
           REPO_TOKEN: ${{ secrets.CML_PAT }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          # ── Header ──
           echo "## ML Pipeline Report" >> report.md
           echo "" >> report.md
           echo "**Runner:** EC2 \`${{ inputs.instance_type || 't3.small' }}\` spot (eu-north-1)" >> report.md
@@ -284,7 +267,6 @@ jobs:
             echo "_confusion_matrix.png not found_" >> report.md
           fi
 
-          # ── Post to PR or commit comment ──
           cml comment create report.md
 
       # ── Keep report as artifact ──────────────────────────────
