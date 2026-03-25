@@ -1,22 +1,28 @@
-# ============================================================
+# =============================================================
 # .github/workflows/train.yml
-# Fashion MNIST MLOps — DVC + CML CI/CD Pipeline
 #
-# Triggers:
-#   - Push / PR to main  → runs on GitHub-hosted runner (local)
-#   - Manual dispatch    → choose local or cloud (EC2 via CML)
+# TRIGGERS:
+#   - Push to main branch          → trains on AWS EC2 (cloud)
+#   - PR targeting main branch     → trains on AWS EC2, posts report to PR
+#   - Push to ANY other branch     → does NOT trigger
+#   - Manual dispatch              → choose instance type
 #
-# Secrets required (Settings → Secrets → Actions):
+# SECRETS REQUIRED (repo Settings → Secrets → Actions):
 #   AWS_ACCESS_KEY_ID
 #   AWS_SECRET_ACCESS_KEY
-#   DVCLIVE_STUDIO_TOKEN   (optional — DVC Studio integration)
-# ============================================================
+#
+# DESIGN:
+#   Job 1 (deploy-runner): provisions a CML spot EC2 runner in eu-north-1
+#   Job 2 (train): runs the full DVC pipeline on that EC2 instance,
+#                  pushes results to S3, posts CML report to GitHub
+# =============================================================
 
 name: ML Pipeline
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main                        # only main — not feature/* or any other branch
     paths:
       - "src/**"
       - "configs/**"
@@ -25,7 +31,8 @@ on:
       - "requirements.txt"
 
   pull_request:
-    branches: [main]
+    branches:
+      - main                        # only PRs whose target is main
     paths:
       - "src/**"
       - "configs/**"
@@ -34,182 +41,142 @@ on:
 
   workflow_dispatch:
     inputs:
-      run_on_cloud:
-        description: "Run pipeline on a cloud EC2 instance (via CML)"
-        type: boolean
-        default: false
       instance_type:
-        description: "EC2 instance type (only used when run_on_cloud=true)"
+        description: "EC2 instance type"
         type: choice
-        default: "t3.xlarge"
+        default: "t3.medium"
         options:
-          - t3.xlarge        # 4 vCPU, 16 GB  — cheap CPU baseline
-          - m5.xlarge        # 4 vCPU, 16 GB  — general purpose
-          - c5.2xlarge       # 8 vCPU, 16 GB  — compute optimised
-          - g4dn.xlarge      # 4 vCPU, 16 GB + T4 GPU
-          - g4dn.2xlarge     # 8 vCPU, 32 GB + T4 GPU
-      spot_instance:
-        description: "Use EC2 spot instance (cheaper, ~70% off, may be interrupted)"
-        type: boolean
-        default: true
+          - t3.medium      # 2 vCPU  4 GB  — default, cheapest viable
+          - t3.large       # 2 vCPU  8 GB
+          - t3.xlarge      # 4 vCPU 16 GB
+          - g4dn.xlarge    # 4 vCPU 16 GB + T4 GPU
 
-# ──────────────────────────────────────────────────────────────
-# Global env — AWS credentials available to every job
-# ──────────────────────────────────────────────────────────────
-env:
-  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-  AWS_DEFAULT_REGION: eu-north-1
-
-# ──────────────────────────────────────────────────────────────
-# Job 1: setup — decide runner type, optionally launch EC2
-# ──────────────────────────────────────────────────────────────
+# =============================================================
+# Job 1 — provision CML EC2 runner
+# =============================================================
 jobs:
-  setup:
+  deploy-runner:
     runs-on: ubuntu-latest
-    outputs:
-      runner-label: ${{ steps.pick_runner.outputs.runner-label }}
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: iterative/setup-cml@v3
 
-      # ── If cloud requested: launch EC2 self-hosted runner ──
-      - name: Launch cloud runner (EC2)
-        if: ${{ inputs.run_on_cloud == true }}
+      - name: Launch CML EC2 spot runner
         env:
           REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          SPOT_FLAG=""
-          if [[ "${{ inputs.spot_instance }}" == "true" ]]; then
-            SPOT_FLAG="--cloud-spot"
-          fi
-
           cml runner launch \
             --cloud=aws \
-            --cloud-region=${AWS_DEFAULT_REGION} \
-            --cloud-type=${{ inputs.instance_type || 't3.xlarge' }} \
-            ${SPOT_FLAG} \
-            --labels=cml-ec2 \
-            --idle-timeout=3600 \
-            --single &
+            --cloud-region=eu-north-1 \
+            --cloud-type=${{ inputs.instance_type || 't3.medium' }} \
+            --cloud-spot \
+            --labels=cml-runner \
+            --idle-timeout=300 \
+            --single
 
-          echo "Cloud runner launched with label: cml-ec2"
-
-      # ── Output the label the train job should run on ──
-      - name: Pick runner label
-        id: pick_runner
-        run: |
-          if [[ "${{ inputs.run_on_cloud }}" == "true" ]]; then
-            echo "runner-label=cml-ec2" >> $GITHUB_OUTPUT
-            echo "Pipeline will run on: EC2 (${{ inputs.instance_type }})"
-          else
-            echo "runner-label=ubuntu-latest" >> $GITHUB_OUTPUT
-            echo "Pipeline will run on: GitHub-hosted runner (ubuntu-latest)"
-          fi
-
-  # ──────────────────────────────────────────────────────────────
-  # Job 2: train — run DVC pipeline + generate CML report
-  # ──────────────────────────────────────────────────────────────
+# =============================================================
+# Job 2 — run DVC pipeline on the EC2 runner
+# =============================================================
   train:
-    needs: setup
-    runs-on: ${{ needs.setup.outputs.runner-label }}
-    timeout-minutes: 120
+    needs: deploy-runner
+    runs-on: [self-hosted, cml-runner]
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
 
-      # ── Python + deps ──
+      # ── Python ──────────────────────────────────────────────
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install "dvc[s3]"
 
-      # ── CML (for report posting) ──
+      # ── CML (for posting the report) ───────────────────────
       - uses: iterative/setup-cml@v3
 
-      # ── Pull DVC-tracked data + models from S3 ──
-      - name: DVC pull (data + models from S3)
+      # ── Pull cached data + models from S3 ──────────────────
+      # dvc pull fetches whatever stages are already cached in S3,
+      # so the pipeline only re-runs stages that actually changed.
+      - name: DVC pull from S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          dvc remote modify s3remote region ${AWS_DEFAULT_REGION}
+          dvc remote modify s3remote region eu-north-1
           dvc pull --run-cache
 
-      # ── Run the full pipeline ──
-      - name: DVC reproduce pipeline
+      # ── Run the pipeline ────────────────────────────────────
+      - name: DVC repro
         env:
-          DVCLIVE_STUDIO_TOKEN: ${{ secrets.DVCLIVE_STUDIO_TOKEN }}
-        run: dvc repro --pull
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: dvc repro
 
-      # ── Push outputs (data, models, run cache) to S3 ──
+      # ── Push updated outputs back to S3 ─────────────────────
       - name: DVC push to S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: dvc push
 
-      # ── Commit updated dvc.lock / metrics back to git ──
+      # ── Commit dvc.lock + metrics back to git ───────────────
       - name: Commit pipeline outputs
         run: |
           git config user.email "ci@github-actions"
           git config user.name "GitHub Actions"
           git add dvc.lock metrics/ dvclive/
-          git diff --staged --quiet || git commit -m "ci: update pipeline outputs [skip ci]"
+          git diff --staged --quiet || \
+            git commit -m "ci: update pipeline outputs [skip ci]"
           git push || true
 
-      # ── Extract final train / test accuracy for the report ──
+      # ── Extract final metrics for the report ────────────────
       - name: Extract metrics
         id: metrics
         run: |
           python3 - <<'PYEOF'
           import json, os
 
-          # ── Train accuracy: last epoch from DVCLive ──
-          # dvclive/metrics.json holds the FINAL values logged by DVCLive
-          train_acc = "N/A"
-          train_loss = "N/A"
+          out = os.environ["GITHUB_OUTPUT"]
+
+          # ── Train + val accuracy from DVCLive (final epoch) ──
+          # DVCLive writes final values to dvclive/metrics.json
+          # Key names depend on what live.log_metric() is called with in train.py
+          # Handles both flat keys (train_accuracy) and nested (train.accuracy)
+          train_acc = train_loss = val_acc = val_loss = "N/A"
           try:
               with open("dvclive/metrics.json") as f:
                   live = json.load(f)
-              # DVCLive nests under the metric group key — try both flat and nested
-              train_acc  = live.get("train_accuracy",
-                          live.get("train", {}).get("accuracy", "N/A"))
-              train_loss = live.get("train_loss",
-                          live.get("train", {}).get("loss", "N/A"))
-              if isinstance(train_acc,  float): train_acc  = f"{train_acc:.4f}"
-              if isinstance(train_loss, float): train_loss = f"{train_loss:.4f}"
+              train_acc  = live.get("train_accuracy",  live.get("train", {}).get("accuracy",  "N/A"))
+              train_loss = live.get("train_loss",       live.get("train", {}).get("loss",      "N/A"))
+              val_acc    = live.get("val_accuracy",     live.get("val",   {}).get("accuracy",  "N/A"))
+              val_loss   = live.get("val_loss",         live.get("val",   {}).get("loss",      "N/A"))
+              def fmt(v): return f"{v:.4f}" if isinstance(v, float) else str(v)
+              train_acc = fmt(train_acc); train_loss = fmt(train_loss)
+              val_acc   = fmt(val_acc);   val_loss   = fmt(val_loss)
           except Exception as e:
-              print(f"dvclive/metrics.json read error: {e}")
+              print(f"dvclive/metrics.json: {e}")
 
-          # ── Val accuracy: last epoch from DVCLive ──
-          val_acc = "N/A"
-          val_loss = "N/A"
-          try:
-              val_acc  = live.get("val_accuracy",
-                         live.get("val", {}).get("accuracy", "N/A"))
-              val_loss = live.get("val_loss",
-                         live.get("val", {}).get("loss", "N/A"))
-              if isinstance(val_acc,  float): val_acc  = f"{val_acc:.4f}"
-              if isinstance(val_loss, float): val_loss = f"{val_loss:.4f}"
-          except Exception:
-              pass
-
-          # ── Test accuracy: from evaluate stage output ──
-          test_acc = "N/A"
-          test_f1  = "N/A"
+          # ── Test accuracy from evaluate stage ─────────────────
+          test_acc = test_f1 = "N/A"
           try:
               with open("metrics/eval.json") as f:
                   ev = json.load(f)
               test_acc = ev.get("accuracy", ev.get("test_accuracy", "N/A"))
-              test_f1  = ev.get("f1_macro", ev.get("f1",             "N/A"))
-              if isinstance(test_acc, float): test_acc = f"{test_acc:.4f}"
-              if isinstance(test_f1,  float): test_f1  = f"{test_f1:.4f}"
+              test_f1  = ev.get("f1_macro", ev.get("f1",            "N/A"))
+              def fmt(v): return f"{v:.4f}" if isinstance(v, float) else str(v)
+              test_acc = fmt(test_acc); test_f1 = fmt(test_f1)
           except Exception as e:
-              print(f"metrics/eval.json read error: {e}")
+              print(f"metrics/eval.json: {e}")
 
-          # Write to GITHUB_OUTPUT so the next step can use them
-          out = os.environ["GITHUB_OUTPUT"]
           with open(out, "a") as f:
               f.write(f"train_acc={train_acc}\n")
               f.write(f"train_loss={train_loss}\n")
@@ -218,82 +185,66 @@ jobs:
               f.write(f"test_acc={test_acc}\n")
               f.write(f"test_f1={test_f1}\n")
 
-          print(f"train_acc={train_acc}  train_loss={train_loss}")
-          print(f"val_acc={val_acc}      val_loss={val_loss}")
-          print(f"test_acc={test_acc}    test_f1={test_f1}")
+          print(f"train  acc={train_acc}  loss={train_loss}")
+          print(f"val    acc={val_acc}    loss={val_loss}")
+          print(f"test   acc={test_acc}   f1={test_f1}")
           PYEOF
 
-      # ── Generate CML report and post to PR ──
-      - name: Generate CML report
+      # ── Build and post CML report ───────────────────────────
+      - name: Post CML report
         env:
           REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           # ── Header ──
-          echo "## 📊 ML Pipeline Report" >> report.md
+          echo "## ML Pipeline Report" >> report.md
+          echo "" >> report.md
+          echo "**Runner:** EC2 \`${{ inputs.instance_type || 't3.medium' }}\` spot (eu-north-1)" >> report.md
           echo "" >> report.md
 
-          # ── Runner info ──
-          if [[ "${{ inputs.run_on_cloud }}" == "true" ]]; then
-            echo "**🖥️ Runner:** EC2 \`${{ inputs.instance_type }}\` (eu-north-1)" >> report.md
-          else
-            echo "**🖥️ Runner:** GitHub-hosted (ubuntu-latest)" >> report.md
-          fi
-          echo "" >> report.md
-
-          # ── Final accuracy summary table (top of report) ──
-          echo "### 🎯 Final Accuracy Summary" >> report.md
+          # ── Accuracy summary table ──
+          echo "### Accuracy" >> report.md
           echo "" >> report.md
           echo "| Split | Accuracy | Loss |" >> report.md
           echo "|-------|----------|------|" >> report.md
-          echo "| **Train** (last epoch) | \`${{ steps.metrics.outputs.train_acc }}\` | \`${{ steps.metrics.outputs.train_loss }}\` |" >> report.md
-          echo "| **Val**   (last epoch) | \`${{ steps.metrics.outputs.val_acc }}\`   | \`${{ steps.metrics.outputs.val_loss }}\`   |" >> report.md
-          echo "| **Test**  (held-out)   | \`${{ steps.metrics.outputs.test_acc }}\`  | —    |" >> report.md
+          echo "| Train (last epoch) | \`${{ steps.metrics.outputs.train_acc }}\` | \`${{ steps.metrics.outputs.train_loss }}\` |" >> report.md
+          echo "| Val   (last epoch) | \`${{ steps.metrics.outputs.val_acc }}\`   | \`${{ steps.metrics.outputs.val_loss }}\`   |" >> report.md
+          echo "| Test  (held-out)   | \`${{ steps.metrics.outputs.test_acc }}\`  | —    |" >> report.md
           echo "" >> report.md
-          echo "> F1 (macro, test): \`${{ steps.metrics.outputs.test_f1 }}\`" >> report.md
+          echo "> F1 macro (test): \`${{ steps.metrics.outputs.test_f1 }}\`" >> report.md
           echo "" >> report.md
 
           # ── Metrics diff vs main ──
-          echo "### 🔀 Metrics vs \`main\`" >> report.md
+          echo "### Changes vs main" >> report.md
           echo "" >> report.md
-          dvc metrics diff main --md >> report.md || echo "_No diff available (first run or no prior commit)._" >> report.md
+          dvc metrics diff main --md >> report.md 2>/dev/null || \
+            echo "_No previous run on main to compare against._" >> report.md
           echo "" >> report.md
 
-          # ── Train/Val loss & accuracy curves ──
-          echo "### 📉 Training Curves (loss · accuracy)" >> report.md
+          # ── Loss curve ──
+          echo "### Loss curve" >> report.md
           echo "" >> report.md
-          if [ -f metrics/accuracy_curve.png ]; then
-            cml publish metrics/accuracy_curve.png --md >> report.md
-          fi
           if [ -f metrics/loss_curve.png ]; then
             cml publish metrics/loss_curve.png --md >> report.md
+          else
+            echo "_loss_curve.png not found_" >> report.md
           fi
           echo "" >> report.md
 
           # ── Confusion matrix ──
-          echo "### 🔲 Confusion Matrix (test set)" >> report.md
+          echo "### Confusion matrix (test set)" >> report.md
           echo "" >> report.md
           if [ -f metrics/confusion_matrix.png ]; then
             cml publish metrics/confusion_matrix.png --md >> report.md
-          fi
-          echo "" >> report.md
-
-          # ── DVCLive step-level interactive plot ──
-          echo "### 📊 Step-level DVCLive Plot" >> report.md
-          echo "" >> report.md
-          dvc plots show dvclive/plots/metrics \
-            --template smooth \
-            -x step \
-            -y train_accuracy,val_accuracy \
-            --title "Train vs Val Accuracy" \
-            -o dvclive_accuracy.html 2>/dev/null || true
-          if [ -f dvclive_accuracy.html ]; then
-            cml publish dvclive_accuracy.html --md >> report.md
+          else
+            echo "_confusion_matrix.png not found_" >> report.md
           fi
 
-          # ── Post to PR (or commit comment for direct pushes) ──
+          # ── Post to PR or commit comment ──
           cml comment create report.md
 
-      # ── Upload report as artifact (always, for non-PR runs) ──
+      # ── Keep report as artifact for non-PR runs ─────────────
       - name: Upload report artifact
         if: always()
         uses: actions/upload-artifact@v4

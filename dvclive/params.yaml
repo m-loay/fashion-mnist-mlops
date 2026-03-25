@@ -1,4 +1,4 @@
-arch_config: configs/cnn_basic.yml
+arch_config: configs\cnn_basic.yml
 arch_name: cnn_basic
 epochs: 10
 batch_size: 64

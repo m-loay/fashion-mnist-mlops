@@ -59,29 +59,29 @@ stages:
   evaluate:
     cmd: python src/evaluate.py
     deps:
-      - src/evaluate.py
-      - models/model.keras
-      - data/processed/X_test.npy
-      - data/processed/y_test.npy
+    - src/evaluate.py
+    - models/model.keras
+    - data/processed/X_test.npy
+    - data/processed/y_test.npy
     params:
-      - base.num_classes
-      - base.class_names
-      - paths.processed_dir
-      - paths.models_dir
-      - paths.metrics_dir
-      - evaluate
+    - base.num_classes
+    - base.class_names
+    - paths.processed_dir
+    - paths.models_dir
+    - paths.metrics_dir
+    - evaluate
     metrics:
-      - metrics/eval.json:
-          cache: false
+    - metrics/eval.json:
+        cache: false
     plots:
-      - metrics/confusion_matrix.csv:
-          template: dvc_config/confusion_percent.json
-          x: predicted
-          y: actual
-          cache: false
-      - metrics/confusion_matrix.png: {}
-      - metrics/accuracy_curve.png: {}
-      - metrics/loss_curve.png: {}
+    - metrics/confusion_matrix.csv:
+        template: dvc_config/confusion_percent.json
+        x: predicted
+        y: actual
+        cache: false
+    - metrics/confusion_matrix.png: {}
+    - metrics/accuracy_curve.png: {}
+    - metrics/loss_curve.png: {}
 
 # These top-level sections are only needed for files NOT produced by stages.
 # Since your stages already define them, I've cleaned these up.
