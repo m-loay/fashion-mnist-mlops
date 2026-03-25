@@ -1,26 +1,38 @@
 # =============================================================
 # .github/workflows/train.yml
-#   See workflow_dispatch inputs and env block below.
 #
 # TRIGGERS:
-#   Push to main:   src/**, configs/**, params.yaml, dvc.yaml, requirements.txt
-#   PR to main:     src/**, configs/**, params.yaml, dvc.yaml
-#   Manual:         choose cloud provider + force repro flag
+#   - Push to main branch          → trains on AWS EC2 (cloud)
+#   - PR targeting main branch     → trains on AWS EC2, posts report to PR
+#   - Push to ANY other branch     → does NOT trigger
+#   - Manual dispatch              → choose instance type
 #
-# SECRETS REQUIRED:
-#   AWS_ACCESS_KEY_ID              IAM user, S3 + EC2 permissions
-#   AWS_SECRET_ACCESS_KEY          matching secret key
-#   AWS_SUBNET_ID                  VPC subnet for EC2 runner
-#   AWS_SECURITY_GROUP_ID          security group for EC2 runner
-#   CML_PAT                        GitHub PAT (repo + workflow scope)
-#                                  used by CML to post PR comments
+# SECRETS REQUIRED (repo Settings → Secrets → Actions):
+#   AWS_ACCESS_KEY_ID
+#   AWS_SECRET_ACCESS_KEY
+#   AWS_SUBNET_ID
+#   AWS_SECURITY_GROUP_ID
+#   CML_PAT
+#
+# CONTAINER:
+#   ghcr.io/iterative/cml:0-dvc3-base1
+#   Matches dvc[s3]==3.59.2 + dvclive==3.48.1 from requirements.txt.
+#   Pre-installed: CML, DVC 3.x, Python, Git.
+#   pip install -r requirements.txt pins the exact versions on top.
+#
+# DESIGN:
+#   Job 1 (start-runner): provisions an EC2 spot runner in eu-north-1
+#   Job 2 (train): runs inside the container on that EC2 instance.
+#                  dvc repro is where actual training happens.
+#   Job 3 (stop-runner): terminates the EC2 instance after train.
 # =============================================================
 
 name: ML Pipeline
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - "src/**"
       - "configs/**"
@@ -29,7 +41,8 @@ on:
       - "requirements.txt"
 
   pull_request:
-    branches: [main]
+    branches:
+      - main
     paths:
       - "src/**"
       - "configs/**"
@@ -38,54 +51,28 @@ on:
 
   workflow_dispatch:
     inputs:
-      cloud_provider:
-        description: "Where to run training"
-        type: choice
-        default: "local"
-        options:
-          - local         # GitHub-hosted runner — free, instant, no infra
-          - aws           # EC2 spot instance — needed for GPU or large memory
       instance_type:
-        description: "EC2 instance type (only used when cloud=aws)"
+        description: "EC2 instance type"
         type: choice
         default: "t3.medium"
         options:
-          - t3.medium     # 2 vCPU  4 GB  — CPU training, cheapest
-          - t3.large      # 2 vCPU  8 GB
-          - t3.xlarge     # 4 vCPU 16 GB
-          - g4dn.xlarge   # 4 vCPU 16 GB + T4 GPU — use for GPU training
-      force_repro:
-        description: "Force all DVC stages to re-run (ignore run-cache)"
-        type: boolean
-        default: false
-
-# Prevents concurrent runs on the same ref.
-# Avoids two jobs racing to push to the same DVC S3 remote.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-# Required for:
-#   - git push (dvc.lock + metrics commit back to branch)
-#   - CML PR comment posting
-permissions:
-  contents: write
+          - t3.medium      # 2 vCPU  4 GB  — default, cheapest viable
+          - t3.large       # 2 vCPU  8 GB
+          - t3.xlarge      # 4 vCPU 16 GB
+          - g4dn.xlarge    # 4 vCPU 16 GB + T4 GPU
 
 # =============================================================
-# JOB 1 — start-runner
-# Provisions cloud compute when CLOUD_PROVIDER=aws.
-# Skipped entirely when running on GitHub-hosted runner.
+# Job 1 — provision EC2 runner
+# Runs on free GitHub-hosted runner.
+# Launches a spot EC2 and registers it with GitHub Actions.
+# Job 2 is then routed to that EC2 instance.
 # =============================================================
 jobs:
   start-runner:
-    name: Start EC2 runner
     runs-on: ubuntu-latest
-    # Only run this job when cloud=aws is requested
-    if: ${{ github.event.inputs.cloud_provider == 'aws' }}
     outputs:
-      runner-label:  ${{ steps.ec2.outputs.label }}
-      instance-id:   ${{ steps.ec2.outputs.ec2-instance-id }}
-
+      runner-label: ${{ steps.ec2.outputs.label }}
+      instance-id:  ${{ steps.ec2.outputs.ec2-instance-id }}
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -94,117 +81,81 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            eu-north-1
 
-      # machulav/ec2-github-runner is the correct tool for EC2 provisioning:
-      #   - You specify ANY AMI you choose — no hardcoded Ubuntu 18.04
-      #   - Uses AWS SSM (no open SSH port required)
-      #   - Automatically registers the runner with GitHub Actions
-      #   - To switch to GCP/Azure: replace this action with the
-      #     equivalent cloud-specific runner action. The train job
-      #     below is completely unchanged.
       - name: Start EC2 runner
         id: ec2
         uses: machulav/ec2-github-runner@v2
         with:
-          mode:                start
-          github-token:        ${{ secrets.CML_PAT }}
-          # Ubuntu 22.04 LTS (Jammy) — official Canonical AMI for eu-north-1
-          # To update: https://cloud-images.ubuntu.com/locator/ec2/
-          # Filter: eu-north-1 + 22.04 LTS + amd64 + hvm:ebs-ssd
-          ec2-image-id:        ami-0028809abe98af413
-          ec2-instance-type:   ${{ github.event.inputs.instance_type || 't3.medium' }}
-          subnet-id:           ${{ secrets.AWS_SUBNET_ID }}
-          security-group-id:   ${{ secrets.AWS_SECURITY_GROUP_ID }}
-          aws-resource-tags: >
-            [
-              {"Key": "Name",       "Value": "ml-pipeline-runner"},
-              {"Key": "Project",    "Value": "fashion-mnist-mlops"},
-              {"Key": "ManagedBy",  "Value": "github-actions"}
-            ]
+          mode:              start
+          github-token:      ${{ secrets.CML_PAT }}
+          ec2-image-id:      ami-0028809abe98af413
+          ec2-instance-type: ${{ inputs.instance_type || 't3.medium' }}
+          subnet-id:         ${{ secrets.AWS_SUBNET_ID }}
+          security-group-id: ${{ secrets.AWS_SECURITY_GROUP_ID }}
+          spot:              true
 
-  # =============================================================
-  # JOB 2 — train
-  # Runs on either:
-  #   - The EC2 runner provisioned above (when cloud=aws)
-  #   - GitHub-hosted ubuntu-latest (all other cases)
-  # The job body is IDENTICAL either way — Docker provides
-  # the consistent execution environment, not the base VM.
-  # =============================================================
+# =============================================================
+# Job 2 — run DVC pipeline on the EC2 runner
+#
+# runs-on: runner-label from Job 1  → routes to the EC2 instance
+#
+# dvc repro → actual training runs here on EC2, inside container
+# =============================================================
   train:
-    name: Train & Evaluate
-    needs: [start-runner]
-    # Route to EC2 runner or GitHub-hosted runner depending on cloud selection.
-    # needs.start-runner.result == 'skipped' when cloud != aws.
-    runs-on: >-
-      ${{
-        needs.start-runner.result == 'success'
-        && fromJSON(format('["self-hosted", "{0}"]', needs.start-runner.outputs.runner-label))
-        || 'ubuntu-latest'
-      }}
+    needs: start-runner
+    runs-on: ${{ needs.start-runner.outputs.runner-label }}
     timeout-minutes: 90
-
-    # Docker container provides the execution environment.
-    # This is the key to true portability: the base VM (EC2 or GitHub)
-    # just needs to run Docker. The actual Python/DVC/CML versions
-    # are pinned here and are identical regardless of cloud provider.
     container:
       image: ghcr.io/iterative/cml:0-dvc3-base1
 
-    env:
-      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION:    eu-north-1
-
     steps:
-      # -- 1. Source code -------------------------------------------
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0    # full history for `dvc metrics diff main`
+      - uses: actions/checkout@v4
 
-      # -- 2. Python 3.12 -------------------------------------------
-      # The CML base image ships with an older Python. Pin 3.12 to
-      # match your requirements.txt. Using deadsnakes PPA — reliable
-      # across Ubuntu versions, same approach as in your original workflow.
+      # ── Enforce Python 3.12 ─────────────────────────────────
+      # requirements.txt is tested and works on Python 3.12.
+      # The CML base image ships with an older Python — install
+      # 3.12 explicitly so the environment always matches.
       - name: Set up Python 3.12
         run: |
-          apt-get update -y -q
-          apt-get install -y -q software-properties-common
-          add-apt-repository -y ppa:deadsnakes/ppa
-          apt-get update -y -q
-          apt-get install -y -q python3.12 python3.12-venv python3.12-dev python3.12-distutils
+          apt-get update -y
+          apt-get install -y python3.12 python3.12-venv python3.12-dev
           update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
           curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
           python3 --version
 
-      # -- 3. Dependencies ------------------------------------------
+      # ── Pin exact versions from requirements.txt ────────────
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # -- 4. DVC pull data + run-cache from S3 ---------------------
+      # ── Pull cached data + models from S3 ──────────────────
+      # dvc pull fetches whatever stages are already cached in S3,
+      # so the pipeline only re-runs stages that actually changed.
       - name: DVC pull from S3
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           dvc remote modify s3remote region eu-north-1
           dvc pull --run-cache
 
-      # -- 5. Run the ML pipeline -----------------------------------
-      # Stages: load_data -> preprocess -> train -> evaluate
-      # --force bypasses cache when requested via workflow_dispatch.
+      # ── Run the full pipeline on EC2 ────────────────────────
+      # Stages: load_data → preprocess → train → evaluate
+      # Only changed stages re-run (DVC caching).
       - name: DVC repro
-        run: |
-          if [ "${{ github.event.inputs.force_repro }}" = "true" ]; then
-            echo "Force flag set — re-running all stages"
-            dvc repro --force
-          else
-            dvc repro
-          fi
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: dvc repro
 
-      # -- 6. Push artifacts + run-cache back to S3 -----------------
+      # ── Push updated outputs back to S3 ─────────────────────
       - name: DVC push to S3
-        run: dvc push --run-cache
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: dvc push
 
-      # -- 7. Commit dvc.lock + metrics back to the branch ----------
+      # ── Commit dvc.lock + metrics back to git ───────────────
       - name: Commit pipeline outputs
         run: |
           git config user.email "ci@github-actions"
@@ -214,7 +165,9 @@ jobs:
             git commit -m "ci: update pipeline outputs [skip ci]"
           git push || true
 
-      # -- 8. Extract metrics for the report table ------------------
+      # ── Extract final metrics for the report ────────────────
+      # dvclive/metrics.json  → train + val accuracy (final epoch)
+      # metrics/eval.json     → test accuracy + F1
       - name: Extract metrics
         id: metrics
         run: |
@@ -227,29 +180,26 @@ jobs:
           try:
               with open("dvclive/metrics.json") as f:
                   live = json.load(f)
-
               def get(d, *keys):
                   for k in keys:
                       if k in d: return d[k]
                   return "N/A"
-
               train_acc  = get(live, "train_accuracy",  "accuracy")
               train_loss = get(live, "train_loss",       "loss")
               val_acc    = get(live, "val_accuracy")
               val_loss   = get(live, "val_loss")
-
+              # also try nested: live["train"]["accuracy"]
               if train_acc == "N/A" and "train" in live:
-                  train_acc  = live["train"].get("accuracy", "N/A")
-                  train_loss = live["train"].get("loss",     "N/A")
+                  train_acc  = live["train"].get("accuracy",  "N/A")
+                  train_loss = live["train"].get("loss",      "N/A")
               if val_acc == "N/A" and "val" in live:
                   val_acc  = live["val"].get("accuracy", "N/A")
                   val_loss = live["val"].get("loss",     "N/A")
-
               def fmt(v): return f"{v:.4f}" if isinstance(v, float) else str(v)
               train_acc = fmt(train_acc); train_loss = fmt(train_loss)
               val_acc   = fmt(val_acc);   val_loss   = fmt(val_loss)
           except Exception as e:
-              print(f"[warn] dvclive/metrics.json: {e}")
+              print(f"dvclive/metrics.json read error: {e}")
 
           test_acc = test_f1 = "N/A"
           try:
@@ -260,97 +210,96 @@ jobs:
               def fmt(v): return f"{v:.4f}" if isinstance(v, float) else str(v)
               test_acc = fmt(test_acc); test_f1 = fmt(test_f1)
           except Exception as e:
-              print(f"[warn] metrics/eval.json: {e}")
+              print(f"metrics/eval.json read error: {e}")
 
           with open(out, "a") as f:
-              f.write(f"train_acc={train_acc}\n");  f.write(f"train_loss={train_loss}\n")
-              f.write(f"val_acc={val_acc}\n");       f.write(f"val_loss={val_loss}\n")
-              f.write(f"test_acc={test_acc}\n");     f.write(f"test_f1={test_f1}\n")
+              f.write(f"train_acc={train_acc}\n")
+              f.write(f"train_loss={train_loss}\n")
+              f.write(f"val_acc={val_acc}\n")
+              f.write(f"val_loss={val_loss}\n")
+              f.write(f"test_acc={test_acc}\n")
+              f.write(f"test_f1={test_f1}\n")
 
-          print(f"train acc={train_acc}  loss={train_loss}")
-          print(f"val   acc={val_acc}    loss={val_loss}")
-          print(f"test  acc={test_acc}   f1={test_f1}")
+          print(f"train  acc={train_acc}  loss={train_loss}")
+          print(f"val    acc={val_acc}    loss={val_loss}")
+          print(f"test   acc={test_acc}   f1={test_f1}")
           PYEOF
 
-      # -- 9. Post CML report ---------------------------------------
-      # CML is used ONLY for reporting here — not for EC2 provisioning.
-      # This is what CML is actually reliable at.
+      # ── Build and post CML report ───────────────────────────
       - name: Post CML report
-        if: always()
         env:
-          REPO_TOKEN: ${{ secrets.CML_PAT }}
+          REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          RUNNER_DESC="${{ github.event.inputs.cloud_provider == 'aws' && format('EC2 `{0}` spot (eu-north-1)', github.event.inputs.instance_type || 't3.medium') || 'GitHub-hosted `ubuntu-latest`' }}"
-
+          # ── Header ──
           echo "## ML Pipeline Report" >> report.md
           echo "" >> report.md
-          echo "> **Runner:** ${RUNNER_DESC}" >> report.md
-          echo "> **Commit:** \`${{ github.sha }}\`" >> report.md
+          echo "**Runner:** EC2 \`${{ inputs.instance_type || 't3.medium' }}\` spot (eu-north-1)" >> report.md
           echo "" >> report.md
 
-          echo "### Results" >> report.md
+          # ── Accuracy summary table ──
+          echo "### Accuracy" >> report.md
           echo "" >> report.md
           echo "| Split | Accuracy | Loss |" >> report.md
           echo "|-------|----------|------|" >> report.md
           echo "| Train (last epoch) | \`${{ steps.metrics.outputs.train_acc }}\` | \`${{ steps.metrics.outputs.train_loss }}\` |" >> report.md
           echo "| Val   (last epoch) | \`${{ steps.metrics.outputs.val_acc }}\`   | \`${{ steps.metrics.outputs.val_loss }}\`   |" >> report.md
-          echo "| Test  (held-out)   | \`${{ steps.metrics.outputs.test_acc }}\`  | -- |" >> report.md
+          echo "| Test  (held-out)   | \`${{ steps.metrics.outputs.test_acc }}\`  | —    |" >> report.md
           echo "" >> report.md
-          echo "> **F1 macro (test):** \`${{ steps.metrics.outputs.test_f1 }}\`" >> report.md
+          echo "> F1 macro (test): \`${{ steps.metrics.outputs.test_f1 }}\`" >> report.md
           echo "" >> report.md
 
+          # ── Metrics diff vs main ──
           echo "### Changes vs main" >> report.md
           echo "" >> report.md
           dvc metrics diff main --md >> report.md 2>/dev/null || \
             echo "_No previous run on main to compare against._" >> report.md
           echo "" >> report.md
 
-          echo "### Confusion Matrix (test set)" >> report.md
+          # ── Loss curve ──
+          echo "### Loss curve" >> report.md
           echo "" >> report.md
-          [ -f metrics/confusion_matrix.png ] && \
-            cml publish metrics/confusion_matrix.png --md >> report.md || \
-            echo "_metrics/confusion_matrix.png not found_" >> report.md
-          echo "" >> report.md
-
-          echo "### Accuracy Curve" >> report.md
-          echo "" >> report.md
-          [ -f metrics/accuracy_curve.png ] && \
-            cml publish metrics/accuracy_curve.png --md >> report.md || \
-            echo "_metrics/accuracy_curve.png not found_" >> report.md
+          if [ -f metrics/loss_curve.png ]; then
+            cml publish metrics/loss_curve.png --md >> report.md
+          else
+            echo "_loss_curve.png not found_" >> report.md
+          fi
           echo "" >> report.md
 
-          echo "### Loss Curve" >> report.md
+          # ── Confusion matrix ──
+          echo "### Confusion matrix (test set)" >> report.md
           echo "" >> report.md
-          [ -f metrics/loss_curve.png ] && \
-            cml publish metrics/loss_curve.png --md >> report.md || \
-            echo "_metrics/loss_curve.png not found_" >> report.md
+          if [ -f metrics/confusion_matrix.png ]; then
+            cml publish metrics/confusion_matrix.png --md >> report.md
+          else
+            echo "_confusion_matrix.png not found_" >> report.md
+          fi
 
-          cml comment create --update report.md
+          # ── Post to PR or commit comment ──
+          cml comment create report.md
 
-      # -- 10. Upload artifacts -------------------------------------
-      - name: Upload artifacts
+      # ── Keep report as artifact ──────────────────────────────
+      - name: Upload report artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ml-report-${{ github.run_number }}
+          name: ml-report
           path: |
             report.md
             metrics/
             dvclive/
           retention-days: 30
 
-  # =============================================================
-  # JOB 3 — stop-runner
-  # Always terminates the EC2 instance after the train job.
-  # `if: always()` is critical — ensures cleanup even on failure.
-  # Skipped when running on GitHub-hosted runner (no EC2 to stop).
-  # =============================================================
+# =============================================================
+# Job 3 — terminate EC2 runner
+# Always runs — even if train fails — to avoid leaving a
+# running EC2 instance that incurs cost.
+# =============================================================
   stop-runner:
-    name: Stop EC2 runner
     needs: [start-runner, train]
     runs-on: ubuntu-latest
-    if: ${{ always() && needs.start-runner.result == 'success' }}
-
+    if: always()
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -366,44 +315,3 @@ jobs:
           github-token:    ${{ secrets.CML_PAT }}
           label:           ${{ needs.start-runner.outputs.runner-label }}
           ec2-instance-id: ${{ needs.start-runner.outputs.instance-id }}
-
-# =============================================================
-# SWITCHING CLOUD PROVIDERS
-# =============================================================
-#
-# To add GCP support, add a parallel start-runner-gcp job:
-#
-#   start-runner-gcp:
-#     if: ${{ github.event.inputs.cloud_provider == 'gcp' }}
-#     steps:
-#       - uses: google-github-actions/auth@v2
-#         with:
-#           credentials_json: ${{ secrets.GCP_SA_KEY }}
-#       - run: |
-#           gcloud compute instances create ml-runner-${{ github.run_id }} \
-#             --zone=europe-north1-a \
-#             --machine-type=n1-standard-4 \
-#             --image-family=ubuntu-2204-lts \
-#             --image-project=ubuntu-os-cloud
-#           # Register as GitHub self-hosted runner...
-#
-# The train job runs in its Docker container regardless of
-# which cloud provisioned the VM. Zero changes to train job.
-#
-# For DVC storage, change .dvc/config:
-#   AWS:   dvc remote add myremote s3://bucket/path
-#   GCP:   dvc remote add myremote gs://bucket/path
-#   Azure: dvc remote add myremote azure://container/path
-# =============================================================
-#
-# UPDATING THE EC2 AMI:
-#   The AMI ID above is Ubuntu 22.04 LTS for eu-north-1 (Mar 2026).
-#   To get the latest: https://cloud-images.ubuntu.com/locator/ec2/
-#   Or via CLI:
-#     aws ec2 describe-images \
-#       --region eu-north-1 \
-#       --owners 099720109477 \
-#       --filters "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
-#       --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
-#       --output text
-# =============================================================
