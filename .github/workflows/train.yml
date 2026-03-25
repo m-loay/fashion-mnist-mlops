@@ -84,7 +84,7 @@ jobs:
         run: |
           cml runner launch \
             --cloud=aws \
-            --cloud-region=eu-north-1 \
+            --cloud-region=eu-west-1 \
             --cloud-type=${{ inputs.instance_type || 't3.medium' }} \
             --cloud-spot \
             --labels=cml-runner \
