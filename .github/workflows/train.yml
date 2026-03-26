@@ -14,20 +14,20 @@
 #   AWS_SECURITY_GROUP_ID
 #   CML_PAT
 #
-# DESIGN:
-#   Job 1 (start-runner): provisions an EC2 spot runner in eu-north-1
-#                         No pre-runner-script → fast registration (<90s)
-#   Job 2 (train):        runs DIRECTLY on the EC2 instance (no container).
-#                         Python 3.12 + DVC + CML installed in job steps.
-#   Job 3 (stop-runner):  terminates EC2 after train completes or fails.
+# CONTAINER:
+#   ghcr.io/iterative/cml:0-dvc3-base1
+#   Pre-installed: Python, DVC 3.x, CML, git, nodejs.
+#   Only project requirements.txt is installed on top.
 #
-# WHY NO CONTAINER:
-#   Using container: requires Docker pre-installed on the host BEFORE
-#   the runner registers with GitHub. Installing Docker in pre-runner-script
-#   takes 3-4 minutes on a cold Ubuntu instance, exceeding the registration
-#   timeout. Dropping the container eliminates this dependency entirely.
-#   Python 3.12, DVC, and CML are installed directly in the job steps
-#   after registration — at that point there is no timeout constraint.
+# DESIGN:
+#   Job 1 (start-runner): provisions EC2 spot runner in eu-north-1.
+#                         pre-runner-script installs jq (required by
+#                         runner download script) and docker.io (required
+#                         to run the container in Job 2). Both install
+#                         in ~30s — well within the 10min timeout.
+#   Job 2 (train):        runs inside ghcr.io/iterative/cml:0-dvc3-base1.
+#                         No dependency installs except requirements.txt.
+#   Job 3 (stop-runner):  always terminates EC2 — even if train fails.
 # =============================================================
 
 name: ML Pipeline
@@ -67,8 +67,6 @@ on:
 
 # =============================================================
 # Job 1 — provision EC2 runner
-# Bare Ubuntu 22.04 AMI — no pre-runner-script needed.
-# Instance boots and registers with GitHub in under 90 seconds.
 # =============================================================
 jobs:
   start-runner:
@@ -98,21 +96,19 @@ jobs:
           startup-timeout-minutes: 10
           pre-runner-script: |
             sudo apt-get update -y -q
-            sudo apt-get install -y -q jq
+            sudo apt-get install -y -q jq docker.io
+            sudo systemctl enable docker
+            sudo systemctl start docker
 
 # =============================================================
-# Job 2 — run DVC pipeline directly on the EC2 runner
-# No container — Python 3.12, DVC, CML installed in steps.
+# Job 2 — run DVC pipeline inside iterative container
 # =============================================================
   train:
     needs: start-runner
     runs-on: ${{ needs.start-runner.outputs.runner-label }}
     timeout-minutes: 90
-
-    env:
-      AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION:    eu-north-1
+    container:
+      image: ghcr.io/iterative/cml:0-dvc3-base1
 
     steps:
       - name: Checkout code
@@ -120,32 +116,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── Python 3.12 ─────────────────────────────────────────
-      # Ubuntu 22.04 ships Python 3.10. Install 3.12 via deadsnakes.
-      # This runs after registration so there is no timeout risk.
-      - name: Set up Python 3.12
-        run: |
-          sudo apt-get update -y -q
-          sudo apt-get install -y -q software-properties-common
-          sudo add-apt-repository -y ppa:deadsnakes/ppa
-          sudo apt-get update -y -q
-          sudo apt-get install -y -q python3.12 python3.12-venv python3.12-dev python3.12-distutils
-          sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
-          curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
-          python3 --version
-
-      # ── Dependencies (includes DVC, DVCLive, CML) ───────────
+      # ── Install project requirements ─────────────────────────
+      # Container already has Python, DVC 3.x, CML, git, nodejs.
+      # Only project-specific packages need installing.
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ── CML (for PR reporting) ───────────────────────────────
-      - name: Setup CML
-        uses: iterative/setup-cml@v3
-
       # ── Pull cached data + models from S3 ───────────────────
       - name: DVC pull from S3
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           dvc remote modify s3remote region eu-north-1
           dvc pull --run-cache
@@ -154,10 +137,16 @@ jobs:
       # Stages: load_data → preprocess → train → evaluate
       # Only changed stages re-run (DVC caching).
       - name: DVC repro
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: dvc repro
 
       # ── Push updated outputs back to S3 ─────────────────────
       - name: DVC push to S3
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: dvc push
 
       # ── Commit dvc.lock + metrics back to git ───────────────
@@ -171,8 +160,6 @@ jobs:
           git push || true
 
       # ── Extract final metrics for the report ────────────────
-      # dvclive/metrics.json  → train + val accuracy (final epoch)
-      # metrics/eval.json     → test accuracy + F1
       - name: Extract metrics
         id: metrics
         run: |
@@ -234,6 +221,8 @@ jobs:
         if: always()
         env:
           REPO_TOKEN: ${{ secrets.CML_PAT }}
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           echo "## ML Pipeline Report" >> report.md
           echo "" >> report.md
@@ -290,8 +279,7 @@ jobs:
 
 # =============================================================
 # Job 3 — terminate EC2 runner
-# Always runs — even if train fails — to avoid leaving a
-# running EC2 instance that incurs cost.
+# if: always() ensures EC2 is never left running after failure.
 # =============================================================
   stop-runner:
     needs: [start-runner, train]
