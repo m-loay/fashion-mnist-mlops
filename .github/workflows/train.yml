@@ -210,7 +210,6 @@ jobs:
               f.write(f"val_acc={val_acc}\n")
               f.write(f"val_loss={val_loss}\n")
               f.write(f"test_acc={test_acc}\n")
-              f.write(f"test_f1={test_f1}\n")
 
           print(f"train  acc={train_acc}  loss={train_loss}")
           print(f"val    acc={val_acc}    loss={val_loss}")
