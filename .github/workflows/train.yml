@@ -174,7 +174,7 @@ jobs:
           git add dvc.lock metrics/ dvclive/
           git diff --staged --quiet || \
             git commit -m "ci: update pipeline outputs [skip ci]"
-          git push || true
+          git push origin HEAD:${{ github.head_ref || github.ref_name }}
 
       # ── Extract metrics ──────────────────────────────────────
       # dvclive/metrics.json: {"accuracy": {"train": 0.94, "val": 0.92}}
@@ -283,7 +283,7 @@ jobs:
         if: always() && github.event.pull_request.number != ''
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
-          echo "Posting comments to PR #${PR_NUMBER}"
+          echo "Posting comment to PR #${PR_NUMBER}"
 
           python3 - <<'PYEOF'
           import json
