@@ -111,11 +111,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── Install ML dependencies ──────────────────────────────
       - name: Install ML dependencies
         run: pip install --no-cache-dir -r requirements.txt
 
-      # ── Pull cached data + models from S3 ───────────────────
       - name: DVC pull from S3
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -124,21 +122,18 @@ jobs:
           dvc remote modify s3remote region eu-north-1
           dvc pull --run-cache
 
-      # ── Run the full pipeline ────────────────────────────────
       - name: DVC repro
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: dvc repro
 
-      # ── Push updated outputs back to S3 ─────────────────────
       - name: DVC push to S3
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: dvc push
 
-      # ── Commit dvc.lock + metrics back to git ───────────────
       - name: Commit pipeline outputs
         run: |
           git config user.email "ci@github-actions"
@@ -148,7 +143,11 @@ jobs:
             git commit -m "ci: update pipeline outputs [skip ci]"
           git push || true
 
-      # ── Extract final metrics for the report ────────────────
+      # ── Extract metrics ──────────────────────────────────────
+      # dvclive/metrics.json structure (from dvc metrics diff):
+      #   accuracy.train, accuracy.val → live["accuracy"]["train"]
+      # metrics/eval.json:
+      #   test_accuracy → ev["test_accuracy"]
       - name: Extract metrics
         id: metrics
         run: |
@@ -158,21 +157,22 @@ jobs:
           out = os.environ["GITHUB_OUTPUT"]
           fmt = lambda v: f"{v:.4f}" if isinstance(v, float) else str(v)
 
-          train_acc = val_acc = test_acc = test_f1 = "N/A"
+          train_acc = val_acc = test_acc = "N/A"
 
           try:
               with open("dvclive/metrics.json") as f:
                   live = json.load(f)
-              train_acc = fmt(live.get("train", "N/A"))
-              val_acc   = fmt(live.get("val",   "N/A"))
+              # Structure: {"accuracy": {"train": 0.94, "val": 0.92}}
+              acc = live.get("accuracy", {})
+              train_acc = fmt(acc.get("train", "N/A"))
+              val_acc   = fmt(acc.get("val",   "N/A"))
           except Exception as e:
               print(f"dvclive/metrics.json error: {e}")
 
           try:
               with open("metrics/eval.json") as f:
                   ev = json.load(f)
-              test_acc = fmt(ev.get("accuracy", ev.get("test_accuracy", "N/A")))
-              test_f1  = fmt(ev.get("f1_macro", ev.get("f1", "N/A")))
+              test_acc = fmt(ev.get("test_accuracy", ev.get("accuracy", "N/A")))
           except Exception as e:
               print(f"metrics/eval.json error: {e}")
 
@@ -180,12 +180,13 @@ jobs:
               f.write(f"train_acc={train_acc}\n")
               f.write(f"val_acc={val_acc}\n")
               f.write(f"test_acc={test_acc}\n")
-              f.write(f"test_f1={test_f1}\n")
 
-          print(f"train={train_acc} val={val_acc} test={test_acc} f1={test_f1}")
+          print(f"train={train_acc}  val={val_acc}  test={test_acc}")
           PYEOF
 
       # ── Post CML report ──────────────────────────────────────
+      # Images embedded as base64 — renders inline in PR comment.
+      # No external upload, no Cloudflare errors.
       - name: Post CML report
         if: always()
         env:
@@ -193,30 +194,25 @@ jobs:
         run: |
           echo "## ML Pipeline Report" >> report.md
           echo "" >> report.md
-
-          echo "### Metrics" >> report.md
-          echo "" >> report.md
-          echo "| Split | Accuracy | F1 Macro |" >> report.md
-          echo "|-------|----------|----------|" >> report.md
-          echo "| Train | \`${{ steps.metrics.outputs.train_acc }}\` | — |" >> report.md
-          echo "| Val   | \`${{ steps.metrics.outputs.val_acc }}\`   | — |" >> report.md
-          echo "| Test  | \`${{ steps.metrics.outputs.test_acc }}\`  | \`${{ steps.metrics.outputs.test_f1 }}\` |" >> report.md
+          echo "| Split | Accuracy |" >> report.md
+          echo "|-------|----------|" >> report.md
+          echo "| Train | \`${{ steps.metrics.outputs.train_acc }}\` |" >> report.md
+          echo "| Test  | \`${{ steps.metrics.outputs.test_acc }}\`  |" >> report.md
           echo "" >> report.md
 
-          echo "### Changes vs main" >> report.md
-          echo "" >> report.md
-          dvc metrics diff main --md >> report.md 2>/dev/null || \
-            echo "_No previous run on main to compare against._" >> report.md
-          echo "" >> report.md
+          if [ -f metrics/loss_curve.png ]; then
+            echo "### Loss Curve" >> report.md
+            echo "![Loss Curve](data:image/png;base64,$(base64 -w 0 metrics/loss_curve.png))" >> report.md
+            echo "" >> report.md
+          fi
 
-          echo "### Plots" >> report.md
-          echo "Download the **ml-report** artifact from this run to view:" >> report.md
-          echo "- \`metrics/loss_curve.png\`" >> report.md
-          echo "- \`metrics/confusion_matrix.png\`" >> report.md
+          if [ -f metrics/confusion_matrix.png ]; then
+            echo "### Confusion Matrix" >> report.md
+            echo "![Confusion Matrix](data:image/png;base64,$(base64 -w 0 metrics/confusion_matrix.png))" >> report.md
+          fi
 
           cml comment create report.md
 
-      # ── Upload artifacts ─────────────────────────────────────
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
