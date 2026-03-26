@@ -159,8 +159,8 @@ jobs:
           git add metrics/eval.json
           TRIGGER_MSG=$(git log -1 --format=%s ${{ github.event.pull_request.head.sha || github.sha }})
           git diff --staged --quiet || \
-            git commit -m "${TRIGGER_MSG} [update] [skip ci]"
-          git push origin HEAD:${{ github.head_ref || github.ref_name }}
+            git commit --amend --no-edit
+          git push --force-with-lease origin HEAD:${{ github.head_ref || github.ref_name }}
 
       - name: Extract metrics
         id: metrics
