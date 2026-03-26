@@ -283,7 +283,7 @@ jobs:
         if: always() && github.event.pull_request.number != ''
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
-          echo "Posting comment to PR #${PR_NUMBER}"
+          echo "Posting comments to PR #${PR_NUMBER}"
 
           python3 - <<'PYEOF'
           import json
