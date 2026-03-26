@@ -124,7 +124,7 @@ jobs:
         run: |
           dvc remote modify --local s3remote region eu-north-1
           dvc fetch --run-cache
-          dvc pull data/raw data/processed
+          dvc pull load_data preprocess
 
       - name: Untrack metrics outputs from git
         run: |
