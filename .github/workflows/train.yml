@@ -157,10 +157,9 @@ jobs:
           git add dvc.lock dvclive/
           git add -f metrics/*.png
           git add metrics/eval.json
-          TRIGGER_MSG=$(git log -1 --format=%s ${{ github.event.pull_request.head.sha || github.sha }})
+          ORIGINAL_MSG=$(git log -1 --format=%s ${{ github.event.pull_request.head.sha || github.sha }})
           git diff --staged --quiet || \
-            git commit --amend -m "$(git log -1 --format=%s) [skip ci]"
-          git push --force-with-lease origin HEAD:${{ github.head_ref || github.ref_name }}
+            git commit --amend -m "${ORIGINAL_MSG} [skip ci]"
 
       - name: Extract metrics
         id: metrics
