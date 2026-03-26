@@ -21,6 +21,13 @@
 #                         Python 3.12 + DVC + CML installed in job steps.
 #   Job 3 (stop-runner):  terminates EC2 after train completes or fails.
 #
+# WHY NO CONTAINER:
+#   Using container: requires Docker pre-installed on the host BEFORE
+#   the runner registers with GitHub. Installing Docker in pre-runner-script
+#   takes 3-4 minutes on a cold Ubuntu instance, exceeding the registration
+#   timeout. Dropping the container eliminates this dependency entirely.
+#   Python 3.12, DVC, and CML are installed directly in the job steps
+#   after registration — at that point there is no timeout constraint.
 # =============================================================
 
 name: ML Pipeline
@@ -88,6 +95,10 @@ jobs:
           subnet-id:         ${{ secrets.AWS_SUBNET_ID }}
           security-group-id: ${{ secrets.AWS_SECURITY_GROUP_ID }}
           market-type:       spot
+          startup-timeout-minutes: 10
+          pre-runner-script: |
+            sudo apt-get update -y -q
+            sudo apt-get install -y -q jq
 
 # =============================================================
 # Job 2 — run DVC pipeline directly on the EC2 runner
@@ -229,7 +240,6 @@ jobs:
           echo "**Runner:** EC2 \`${{ inputs.instance_type || 't3.small' }}\` spot (eu-north-1)" >> report.md
           echo "" >> report.md
 
-          # ── Accuracy summary table ──
           echo "### Accuracy" >> report.md
           echo "" >> report.md
           echo "| Split | Accuracy | Loss |" >> report.md
@@ -241,14 +251,12 @@ jobs:
           echo "> F1 macro (test): \`${{ steps.metrics.outputs.test_f1 }}\`" >> report.md
           echo "" >> report.md
 
-          # ── Metrics diff vs main ──
           echo "### Changes vs main" >> report.md
           echo "" >> report.md
           dvc metrics diff main --md >> report.md 2>/dev/null || \
             echo "_No previous run on main to compare against._" >> report.md
           echo "" >> report.md
 
-          # ── Loss curve ──
           echo "### Loss curve" >> report.md
           echo "" >> report.md
           if [ -f metrics/loss_curve.png ]; then
@@ -258,7 +266,6 @@ jobs:
           fi
           echo "" >> report.md
 
-          # ── Confusion matrix ──
           echo "### Confusion matrix (test set)" >> report.md
           echo "" >> report.md
           if [ -f metrics/confusion_matrix.png ]; then
