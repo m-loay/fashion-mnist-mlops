@@ -122,8 +122,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           dvc remote modify s3remote region eu-north-1
-          dvc pull data/          # always pull dataset
-          dvc pull --run-cache    # always pull run-cache (enables skip-if-cached)
+          dvc pull --run-cache    # pull run-cache for cache hits
+          dvc pull || true        # pull tracked outputs, tolerate missing model on PR branches
 
       - name: Untrack metrics outputs from git
         run: |
