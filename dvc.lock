@@ -182,21 +182,21 @@ stages:
     outs:
     - path: metrics/accuracy_curve.png
       hash: md5
-      md5: 83a4b6c3f3ae7357b9af47f1535674c7
-      size: 125685
+      md5: 1b71f3f0b0a449f365d07958bde6f844
+      size: 133614
     - path: metrics/confusion_matrix.csv
       hash: md5
-      md5: 6384e5de4736761903de3322aed3f336
-      size: 162751
+      md5: d58da41c3718b6c8ef232b712eb99305
+      size: 152751
     - path: metrics/confusion_matrix.png
       hash: md5
-      md5: 678ca5050c931f2b6bfa296f18c369ff
-      size: 72576
+      md5: d2656d0b5cc937a07a9402e4b3a1a764
+      size: 82444
     - path: metrics/eval.json
       hash: md5
-      md5: b5fdff3a37052d385a47b0ae0a2c4858
-      size: 134
+      md5: 0869d05c3b7bd62078a0ca0e38480694
+      size: 128
     - path: metrics/loss_curve.png
       hash: md5
-      md5: 72eb94de364afb88009ee11e9fb3e114
-      size: 125166
+      md5: 18404bb89d50d7cf84d25a90a33240e9
+      size: 133674
