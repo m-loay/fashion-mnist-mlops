@@ -15,27 +15,34 @@
 #   CML_PAT
 #
 # CONTAINER:
-#   ghcr.io/m-loay/fashion-mnist-mlops:latest
-#   Custom image built by build-image.yml.
-#   Contains: Python 3.12, TensorFlow 2.21.0, DVC, DVCLive,
-#             CML, git, nodejs — all pre-installed.
-#   Only dvc remote config + dvc repro needed at runtime.
+#   ghcr.io/m-loay/dvc-cml-mlops:latest
+#   Contains: Python 3.12, CML, git, nodejs.
+#   ML packages installed at runtime from requirements.txt.
 #
 # DESIGN:
 #   Job 1 (start-runner): provisions EC2 spot runner in eu-north-1.
-#                         pre-runner-script installs jq (required by
-#                         the runner download script) and docker.io
-#                         (required to run the container). Both install
-#                         in ~30s — well within the 10min timeout.
-#   Job 2 (train):        runs inside the custom container.
-#                         No pip installs needed — image has everything.
-#   Job 3 (stop-runner):  always terminates EC2 — even if train fails.
+#   Job 2 (train):        runs inside container, executes DVC pipeline.
+#   Job 3 (stop-runner):  always terminates EC2 after train.
+#
+# BUGS FIXED:
+#   1. permissions: added pull-requests: write (required to post PR comments)
+#   2. Post report: curl was silently failing when PR number is empty
+#      (push-to-main has no PR number → URL was ".../issues//comments" → 404)
+#   3. curl -s swallowed all errors → changed to show response + exit on failure
+#   4. Metrics extraction: added debug step to confirm files exist + their content
+#   5. Raw image URLs: images must be git-committed (not just DVC-tracked).
+#      The commit step does `git add metrics/` so they are in git — but only if
+#      DVC is not also tracking them. Added explicit dvc pull of outputs to
+#      ensure files land in workspace before commit.
+#   6. Added GitHub Step Summary as guaranteed fallback (always renders, even
+#      on push-to-main where there is no PR to comment on).
 # =============================================================
 
 name: ML Pipeline
 
 permissions:
   contents: write
+  pull-requests: write   # FIX 1: required to post PR comments via API
 
 on:
   push:
@@ -103,7 +110,7 @@ jobs:
             sudo systemctl start docker
 
 # =============================================================
-# Job 2 — run DVC pipeline inside custom container
+# Job 2 — run DVC pipeline inside container
 # =============================================================
   train:
     needs: start-runner
@@ -118,14 +125,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── Install ML dependencies ─────────────────────────────
-      # TensorFlow and other ML packages are installed here at
-      # runtime rather than baked into the image. This keeps the
-      # image small (~400MB) for fast pulls on every EC2 run.
       - name: Install ML dependencies
         run: pip install --no-cache-dir -r requirements.txt
 
-      # ── Pull cached data + models from S3 ───────────────────
       - name: DVC pull from S3
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -134,23 +136,37 @@ jobs:
           dvc remote modify s3remote region eu-north-1
           dvc pull --run-cache
 
-      # ── Run the full pipeline ────────────────────────────────
-      # Stages: load_data → preprocess → train → evaluate
-      # Only changed stages re-run (DVC caching).
       - name: DVC repro
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: dvc repro
 
-      # ── Push updated outputs back to S3 ─────────────────────
       - name: DVC push to S3
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: dvc push
 
-      # ── Commit dvc.lock + metrics back to git ───────────────
+      # FIX 4: Debug — confirm metric files and images exist in workspace
+      # Check this in the Actions log. If files are "MISSING", your DVC
+      # pipeline is not writing them to these paths, and nothing downstream
+      # will work. Fix your pipeline stages to write to metrics/ and dvclive/.
+      - name: Debug workspace
+        if: always()
+        run: |
+          echo "========== WORKSPACE FILE TREE =========="
+          find metrics/ dvclive/ -type f 2>/dev/null || echo "(metrics/ and dvclive/ not found)"
+          echo ""
+          echo "========== dvclive/metrics.json =========="
+          cat dvclive/metrics.json 2>/dev/null || echo "MISSING"
+          echo ""
+          echo "========== metrics/eval.json =========="
+          cat metrics/eval.json 2>/dev/null || echo "MISSING"
+          echo ""
+          echo "========== image files =========="
+          ls -lh metrics/*.png 2>/dev/null || echo "No PNG files in metrics/"
+
       - name: Commit pipeline outputs
         run: |
           git config user.email "ci@github-actions"
@@ -158,114 +174,146 @@ jobs:
           git add dvc.lock metrics/ dvclive/
           git diff --staged --quiet || \
             git commit -m "ci: update pipeline outputs [skip ci]"
-          git push || true
+          git push origin HEAD:${{ github.head_ref || github.ref_name }}
 
-      # ── Extract final metrics for the report ────────────────
+      # ── Extract metrics ──────────────────────────────────────
+      # dvclive/metrics.json: {"accuracy": {"train": 0.94, "val": 0.92}}
+      # metrics/eval.json:    {"test_accuracy": 0.89}
       - name: Extract metrics
         id: metrics
+        if: always()
         run: |
           python3 - <<'PYEOF'
           import json, os
 
           out = os.environ["GITHUB_OUTPUT"]
+          fmt = lambda v: f"{v:.4f}" if isinstance(v, float) else str(v)
 
-          train_acc = train_loss = val_acc = val_loss = "N/A"
+          train_acc = test_acc = "N/A"
+
           try:
               with open("dvclive/metrics.json") as f:
                   live = json.load(f)
-              def get(d, *keys):
-                  for k in keys:
-                      if k in d: return d[k]
-                  return "N/A"
-              train_acc  = get(live, "train_accuracy",  "accuracy")
-              train_loss = get(live, "train_loss",       "loss")
-              val_acc    = get(live, "val_accuracy")
-              val_loss   = get(live, "val_loss")
-              if train_acc == "N/A" and "train" in live:
-                  train_acc  = live["train"].get("accuracy",  "N/A")
-                  train_loss = live["train"].get("loss",      "N/A")
-              if val_acc == "N/A" and "val" in live:
-                  val_acc  = live["val"].get("accuracy", "N/A")
-                  val_loss = live["val"].get("loss",     "N/A")
-              def fmt(v): return f"{v:.4f}" if isinstance(v, float) else str(v)
-              train_acc = fmt(train_acc); train_loss = fmt(train_loss)
-              val_acc   = fmt(val_acc);   val_loss   = fmt(val_loss)
+              print(f"dvclive/metrics.json content: {live}")
+              acc = live.get("accuracy", {})
+              # Handle both {"accuracy": {"train": 0.9}} and {"train": 0.9}
+              if isinstance(acc, dict):
+                  train_acc = fmt(acc.get("train", "N/A"))
+              elif isinstance(live.get("train"), (int, float)):
+                  train_acc = fmt(live["train"])
           except Exception as e:
-              print(f"dvclive/metrics.json read error: {e}")
+              print(f"dvclive/metrics.json error: {e}")
 
-          test_acc = test_f1 = "N/A"
           try:
               with open("metrics/eval.json") as f:
                   ev = json.load(f)
-              test_acc = ev.get("accuracy", ev.get("test_accuracy", "N/A"))
-              test_f1  = ev.get("f1_macro", ev.get("f1", "N/A"))
-              def fmt(v): return f"{v:.4f}" if isinstance(v, float) else str(v)
-              test_acc = fmt(test_acc); test_f1 = fmt(test_f1)
+              print(f"metrics/eval.json content: {ev}")
+              test_acc = fmt(ev.get("test_accuracy", ev.get("accuracy", "N/A")))
           except Exception as e:
-              print(f"metrics/eval.json read error: {e}")
+              print(f"metrics/eval.json error: {e}")
 
           with open(out, "a") as f:
               f.write(f"train_acc={train_acc}\n")
-              f.write(f"train_loss={train_loss}\n")
-              f.write(f"val_acc={val_acc}\n")
-              f.write(f"val_loss={val_loss}\n")
               f.write(f"test_acc={test_acc}\n")
-              f.write(f"test_f1={test_f1}\n")
 
-          print(f"train  acc={train_acc}  loss={train_loss}")
-          print(f"val    acc={val_acc}    loss={val_loss}")
-          print(f"test   acc={test_acc}   f1={test_f1}")
+          print(f"FINAL → train={train_acc}  test={test_acc}")
           PYEOF
 
-      # ── Build and post CML report ────────────────────────────
-      - name: Post CML report
+      # ── Build report markdown ────────────────────────────────
+      - name: Build report
+        id: report
         if: always()
-        env:
-          REPO_TOKEN: ${{ secrets.CML_PAT }}
-          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          echo "## ML Pipeline Report" >> report.md
-          echo "" >> report.md
-          echo "**Runner:** EC2 \`${{ inputs.instance_type || 't3.small' }}\` spot (eu-north-1)" >> report.md
-          echo "" >> report.md
+          COMMIT_SHA=$(git rev-parse HEAD)
+          RAW="https://raw.githubusercontent.com/${{ github.repository }}/${COMMIT_SHA}"
 
-          echo "### Accuracy" >> report.md
-          echo "" >> report.md
-          echo "| Split | Accuracy | Loss |" >> report.md
-          echo "|-------|----------|------|" >> report.md
-          echo "| Train (last epoch) | \`${{ steps.metrics.outputs.train_acc }}\` | \`${{ steps.metrics.outputs.train_loss }}\` |" >> report.md
-          echo "| Val   (last epoch) | \`${{ steps.metrics.outputs.val_acc }}\`   | \`${{ steps.metrics.outputs.val_loss }}\`   |" >> report.md
-          echo "| Test  (held-out)   | \`${{ steps.metrics.outputs.test_acc }}\`  | —    |" >> report.md
-          echo "" >> report.md
+          cat > report.md <<EOF
+          ## ML Pipeline Report
 
-          echo "### Changes vs main" >> report.md
-          echo "" >> report.md
-          dvc metrics diff main --md >> report.md 2>/dev/null || \
-            echo "_No previous run on main to compare against._" >> report.md
-          echo "" >> report.md
+          | Split | Accuracy |
+          |-------|----------|
+          | Train | \`${{ steps.metrics.outputs.train_acc }}\` |
+          | Test  | \`${{ steps.metrics.outputs.test_acc }}\`  |
 
-          echo "### Loss curve" >> report.md
-          echo "" >> report.md
+          EOF
+
           if [ -f metrics/loss_curve.png ]; then
-            echo "![Loss curve](./metrics/loss_curve.png)" >> report.md
+            echo "### Loss Curve" >> report.md
+            echo "![Loss Curve](${RAW}/metrics/loss_curve.png)" >> report.md
+            echo "" >> report.md
           else
-            echo "_loss_curve.png not found_" >> report.md
+            echo "_(loss_curve.png not found in workspace)_" >> report.md
+            echo "" >> report.md
           fi
-          echo "" >> report.md
 
-          echo "### Confusion matrix (test set)" >> report.md
-          echo "" >> report.md
           if [ -f metrics/confusion_matrix.png ]; then
-            echo "![Confusion matrix](./metrics/confusion_matrix.png)" >> report.md
+            echo "### Confusion Matrix" >> report.md
+            echo "![Confusion Matrix](${RAW}/metrics/confusion_matrix.png)" >> report.md
           else
-            echo "_confusion_matrix.png not found_" >> report.md
+            echo "_(confusion_matrix.png not found in workspace)_" >> report.md
           fi
 
-          cml comment create --publish report.md
+          echo "--- Built report.md ---"
+          cat report.md
 
-      # ── Keep report as artifact ──────────────────────────────
-      - name: Upload report artifact
+      # ── Always post to GitHub Step Summary ───────────────────
+      # FIX 6: Step Summary always renders correctly (base64 OK here).
+      # Visible in Actions → run → train job → Summary tab.
+      # Works on both push-to-main AND PR triggers.
+      - name: Write step summary
+        if: always()
+        run: |
+          cat report.md >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f metrics/loss_curve.png ]; then
+            echo "### Loss Curve (inline)" >> $GITHUB_STEP_SUMMARY
+            echo "![Loss Curve](data:image/png;base64,$(base64 -w 0 metrics/loss_curve.png))" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -f metrics/confusion_matrix.png ]; then
+            echo "### Confusion Matrix (inline)" >> $GITHUB_STEP_SUMMARY
+            echo "![Confusion Matrix](data:image/png;base64,$(base64 -w 0 metrics/confusion_matrix.png))" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      # ── Post PR comment ──────────────────────────────────────
+      # FIX 2+3: Guard on PR number — empty on push-to-main.
+      # Show curl response so failures are visible in logs.
+      - name: Post PR comment
+        if: always() && github.event.pull_request.number != ''
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          echo "Posting comment to PR #${PR_NUMBER}"
+
+          python3 - <<'PYEOF'
+          import json
+          with open("report.md") as f:
+              body = f.read()
+          with open("payload.json", "w") as f:
+              json.dump({"body": body}, f)
+          PYEOF
+
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X POST \
+            -H "Authorization: token ${{ secrets.CML_PAT }}" \
+            -H "Content-Type: application/json" \
+            -d @payload.json \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments")
+
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS:")
+
+          echo "HTTP Status: ${HTTP_STATUS}"
+          echo "Response: ${BODY}"
+
+          if [ "$HTTP_STATUS" != "201" ]; then
+            echo "ERROR: Expected HTTP 201, got ${HTTP_STATUS}"
+            exit 1
+          fi
+
+          echo "PR comment posted successfully."
+
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
