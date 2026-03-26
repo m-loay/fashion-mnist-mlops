@@ -16,6 +16,8 @@ FROM python:3.12-slim-bookworm
 # Required for GITHUB_TOKEN to have push permission to ghcr.io.
 LABEL org.opencontainers.image.source="https://github.com/m-loay/fashion-mnist-mlops"
 
+
+
 # Apply all security patches first, then install system dependencies.
 # apt-get upgrade eliminates critical/high CVEs in base Debian packages.
 # Install system dependencies:
