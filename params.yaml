@@ -60,7 +60,7 @@ preprocess:
 # ── Stage: train ──────────────────────────────────────────────
 train:
   arch_config: configs/simple_dense.yml
-  epochs: 10
+  epochs: 9
   batch_size: 64
   lr: 0.001
   optimizer: adam     # adam | sgd | rmsprop

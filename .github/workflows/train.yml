@@ -124,6 +124,10 @@ jobs:
           dvc remote modify s3remote region eu-north-1
           dvc pull --run-cache
 
+      - name: Untrack metrics outputs from git
+        run: |
+          git rm -r --cached metrics/*.png metrics/eval.json 2>/dev/null || true
+
       - name: DVC repro
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
