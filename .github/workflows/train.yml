@@ -144,10 +144,8 @@ jobs:
           git push || true
 
       # ── Extract metrics ──────────────────────────────────────
-      # dvclive/metrics.json structure (from dvc metrics diff):
-      #   accuracy.train, accuracy.val → live["accuracy"]["train"]
-      # metrics/eval.json:
-      #   test_accuracy → ev["test_accuracy"]
+      # dvclive/metrics.json: {"accuracy": {"train": 0.94, "val": 0.92}}
+      # metrics/eval.json:    {"test_accuracy": 0.89}
       - name: Extract metrics
         id: metrics
         run: |
@@ -157,15 +155,13 @@ jobs:
           out = os.environ["GITHUB_OUTPUT"]
           fmt = lambda v: f"{v:.4f}" if isinstance(v, float) else str(v)
 
-          train_acc = val_acc = test_acc = "N/A"
+          train_acc = test_acc = "N/A"
 
           try:
               with open("dvclive/metrics.json") as f:
                   live = json.load(f)
-              # Structure: {"accuracy": {"train": 0.94, "val": 0.92}}
               acc = live.get("accuracy", {})
               train_acc = fmt(acc.get("train", "N/A"))
-              val_acc   = fmt(acc.get("val",   "N/A"))
           except Exception as e:
               print(f"dvclive/metrics.json error: {e}")
 
@@ -178,19 +174,16 @@ jobs:
 
           with open(out, "a") as f:
               f.write(f"train_acc={train_acc}\n")
-              f.write(f"val_acc={val_acc}\n")
               f.write(f"test_acc={test_acc}\n")
 
-          print(f"train={train_acc}  val={val_acc}  test={test_acc}")
+          print(f"train={train_acc}  test={test_acc}")
           PYEOF
 
-      # ── Post CML report ──────────────────────────────────────
+      # ── Post report via GitHub API ───────────────────────────
       # Images embedded as base64 — renders inline in PR comment.
-      # No external upload, no Cloudflare errors.
-      - name: Post CML report
+      # Uses curl + GitHub API directly — no cml publish, no Cloudflare.
+      - name: Post report
         if: always()
-        env:
-          REPO_TOKEN: ${{ secrets.CML_PAT }}
         run: |
           echo "## ML Pipeline Report" >> report.md
           echo "" >> report.md
@@ -211,10 +204,12 @@ jobs:
             echo "![Confusion Matrix](data:image/png;base64,$(base64 -w 0 metrics/confusion_matrix.png))" >> report.md
           fi
 
-          # Use GitHub API directly — bypasses CML's broken image upload
-          gh pr comment ${{ github.event.pull_request.number }} \
-            --body-file report.md \
-            --repo ${{ github.repository }}
+          BODY=$(cat report.md)
+          curl -s -X POST \
+            -H "Authorization: token ${{ secrets.CML_PAT }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"body\": $(echo "$BODY" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
 
       - name: Upload artifacts
         if: always()
