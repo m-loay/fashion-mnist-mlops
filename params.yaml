@@ -1,8 +1,18 @@
-# ============================================================
+# =============================================================
 # params.yaml — DVC-tracked parameters
-# ============================================================
+#
+# LOCAL TRAINING:
+#   Change load_data.source to "download" or "local" below,
+#   then run: dvc repro
+#   This runs entirely on your machine — no cloud involved.
+#
+# CLOUD TRAINING (default):
+#   Push to main or open a PR targeting main.
+#   CI pulls source: download automatically.
+#   Do not change anything here for cloud runs.
+# =============================================================
 
-# ── Shared config passed to every stage ──
+# ── Shared ────────────────────────────────────────────────────
 base:
   seed: 42
   dropout: 0.3
@@ -25,30 +35,37 @@ paths:
   metrics_dir: metrics
   dvclive_dir: dvclive
 
-# ── Stage: load_data ──
+# ── Stage: load_data ──────────────────────────────────────────
 load_data:
-  # source options: "download" | "local" | "s3"
+  # "download" — fetch Fashion MNIST from the internet (works on cloud + local)
+  # "local"    — read from local_path below (local machine only)
+  # "s3"       — read raw data directly from S3 uri (advanced)
   source: download
-  # Used when source=local (path to existing raw data)
+
+  # Only used when source=local.
+  # Set to the folder on your machine that contains the raw .npy or
+  # the original Fashion MNIST gz files.
+  # Windows path example:  C:/Users/yourname/datasets/fashion-mnist
   local_path:
-  # Used when source=s3
+
+  # Only used when source=s3
   s3_uri:
 
-# ── Stage: preprocess ──
+# ── Stage: preprocess ─────────────────────────────────────────
 preprocess:
   normalize: true
-  flatten: false          # false=keep 2D for CNN, true=flatten for dense
+  flatten: false            # false = keep 2D for CNN, true = flatten for dense
   validation_split: 0.2
 
-# ── Stage: train ──
+# ── Stage: train ──────────────────────────────────────────────
 train:
   arch_config: configs/cnn_basic.yml
   epochs: 10
   batch_size: 64
   lr: 0.001
-  optimizer: adam          # adam | sgd | rmsprop
+  optimizer: adam     # adam | sgd | rmsprop
 
-# ── Stage: evaluate ──
+# ── Stage: evaluate ───────────────────────────────────────────
 evaluate:
   save_confusion_matrix: true
   save_classification_report: true

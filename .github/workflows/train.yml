@@ -1,0 +1,302 @@
+# =============================================================
+# .github/workflows/train.yml
+#
+# TRIGGERS:
+#   - Push to main branch          → trains on AWS EC2 (cloud)
+#   - PR targeting main branch     → trains on AWS EC2, posts report to PR
+#   - Push to ANY other branch     → does NOT trigger
+#   - Manual dispatch              → choose instance type
+#
+# SECRETS REQUIRED (repo Settings → Secrets → Actions):
+#   AWS_ACCESS_KEY_ID
+#   AWS_SECRET_ACCESS_KEY
+#   AWS_SUBNET_ID
+#   AWS_SECURITY_GROUP_ID
+#   CML_PAT
+#
+# CONTAINER:
+#   ghcr.io/m-loay/fashion-mnist-mlops:latest
+#   Custom image built by build-image.yml.
+#   Contains: Python 3.12, TensorFlow 2.21.0, DVC, DVCLive,
+#             CML, git, nodejs — all pre-installed.
+#   Only dvc remote config + dvc repro needed at runtime.
+#
+# DESIGN:
+#   Job 1 (start-runner): provisions EC2 spot runner in eu-north-1.
+#                         pre-runner-script installs jq (required by
+#                         the runner download script) and docker.io
+#                         (required to run the container). Both install
+#                         in ~30s — well within the 10min timeout.
+#   Job 2 (train):        runs inside the custom container.
+#                         No pip installs needed — image has everything.
+#   Job 3 (stop-runner):  always terminates EC2 — even if train fails.
+# =============================================================
+
+name: ML Pipeline
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "configs/**"
+      - "params.yaml"
+      - "dvc.yaml"
+      - "requirements.txt"
+
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "configs/**"
+      - "params.yaml"
+      - "dvc.yaml"
+
+  workflow_dispatch:
+    inputs:
+      instance_type:
+        description: "EC2 instance type"
+        type: choice
+        default: "t3.small"
+        options:
+          - t3.small       # 2 vCPU  2 GB  — default, free-tier eligible
+          - t3.micro       # 2 vCPU  1 GB  — free-tier, may OOM on training
+
+# =============================================================
+# Job 1 — provision EC2 runner
+# =============================================================
+jobs:
+  start-runner:
+    runs-on: ubuntu-latest
+    outputs:
+      runner-label: ${{ steps.ec2.outputs.label }}
+      instance-id:  ${{ steps.ec2.outputs.ec2-instance-id }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            eu-north-1
+
+      - name: Start EC2 runner
+        id: ec2
+        uses: machulav/ec2-github-runner@v2
+        with:
+          mode:              start
+          github-token:      ${{ secrets.CML_PAT }}
+          ec2-image-id:      ami-0028809abe98af413
+          ec2-instance-type: ${{ inputs.instance_type || 't3.small' }}
+          subnet-id:         ${{ secrets.AWS_SUBNET_ID }}
+          security-group-id: ${{ secrets.AWS_SECURITY_GROUP_ID }}
+          market-type:       spot
+          startup-timeout-minutes: 10
+          pre-runner-script: |
+            sudo apt-get update -y -q
+            sudo apt-get install -y -q jq docker.io
+            sudo systemctl enable docker
+            sudo systemctl start docker
+
+# =============================================================
+# Job 2 — run DVC pipeline inside custom container
+# =============================================================
+  train:
+    needs: start-runner
+    runs-on: ${{ needs.start-runner.outputs.runner-label }}
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/m-loay/dvc-cml-mlops:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── Install ML dependencies ─────────────────────────────
+      # TensorFlow and other ML packages are installed here at
+      # runtime rather than baked into the image. This keeps the
+      # image small (~400MB) for fast pulls on every EC2 run.
+      - name: Install ML dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      # ── Pull cached data + models from S3 ───────────────────
+      - name: DVC pull from S3
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          dvc remote modify s3remote region eu-north-1
+          dvc pull --run-cache
+
+      # ── Run the full pipeline ────────────────────────────────
+      # Stages: load_data → preprocess → train → evaluate
+      # Only changed stages re-run (DVC caching).
+      - name: DVC repro
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: dvc repro
+
+      # ── Push updated outputs back to S3 ─────────────────────
+      - name: DVC push to S3
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: dvc push
+
+      # ── Commit dvc.lock + metrics back to git ───────────────
+      - name: Commit pipeline outputs
+        run: |
+          git config user.email "ci@github-actions"
+          git config user.name "GitHub Actions"
+          git add dvc.lock metrics/ dvclive/
+          git diff --staged --quiet || \
+            git commit -m "ci: update pipeline outputs [skip ci]"
+          git push || true
+
+      # ── Extract final metrics for the report ────────────────
+      - name: Extract metrics
+        id: metrics
+        run: |
+          python3 - <<'PYEOF'
+          import json, os
+
+          out = os.environ["GITHUB_OUTPUT"]
+
+          train_acc = train_loss = val_acc = val_loss = "N/A"
+          try:
+              with open("dvclive/metrics.json") as f:
+                  live = json.load(f)
+              def get(d, *keys):
+                  for k in keys:
+                      if k in d: return d[k]
+                  return "N/A"
+              train_acc  = get(live, "train_accuracy",  "accuracy")
+              train_loss = get(live, "train_loss",       "loss")
+              val_acc    = get(live, "val_accuracy")
+              val_loss   = get(live, "val_loss")
+              if train_acc == "N/A" and "train" in live:
+                  train_acc  = live["train"].get("accuracy",  "N/A")
+                  train_loss = live["train"].get("loss",      "N/A")
+              if val_acc == "N/A" and "val" in live:
+                  val_acc  = live["val"].get("accuracy", "N/A")
+                  val_loss = live["val"].get("loss",     "N/A")
+              def fmt(v): return f"{v:.4f}" if isinstance(v, float) else str(v)
+              train_acc = fmt(train_acc); train_loss = fmt(train_loss)
+              val_acc   = fmt(val_acc);   val_loss   = fmt(val_loss)
+          except Exception as e:
+              print(f"dvclive/metrics.json read error: {e}")
+
+          test_acc = test_f1 = "N/A"
+          try:
+              with open("metrics/eval.json") as f:
+                  ev = json.load(f)
+              test_acc = ev.get("accuracy", ev.get("test_accuracy", "N/A"))
+              test_f1  = ev.get("f1_macro", ev.get("f1", "N/A"))
+              def fmt(v): return f"{v:.4f}" if isinstance(v, float) else str(v)
+              test_acc = fmt(test_acc); test_f1 = fmt(test_f1)
+          except Exception as e:
+              print(f"metrics/eval.json read error: {e}")
+
+          with open(out, "a") as f:
+              f.write(f"train_acc={train_acc}\n")
+              f.write(f"train_loss={train_loss}\n")
+              f.write(f"val_acc={val_acc}\n")
+              f.write(f"val_loss={val_loss}\n")
+              f.write(f"test_acc={test_acc}\n")
+              f.write(f"test_f1={test_f1}\n")
+
+          print(f"train  acc={train_acc}  loss={train_loss}")
+          print(f"val    acc={val_acc}    loss={val_loss}")
+          print(f"test   acc={test_acc}   f1={test_f1}")
+          PYEOF
+
+      # ── Build and post CML report ────────────────────────────
+      - name: Post CML report
+        if: always()
+        env:
+          REPO_TOKEN: ${{ secrets.CML_PAT }}
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          echo "## ML Pipeline Report" >> report.md
+          echo "" >> report.md
+          echo "**Runner:** EC2 \`${{ inputs.instance_type || 't3.small' }}\` spot (eu-north-1)" >> report.md
+          echo "" >> report.md
+
+          echo "### Accuracy" >> report.md
+          echo "" >> report.md
+          echo "| Split | Accuracy | Loss |" >> report.md
+          echo "|-------|----------|------|" >> report.md
+          echo "| Train (last epoch) | \`${{ steps.metrics.outputs.train_acc }}\` | \`${{ steps.metrics.outputs.train_loss }}\` |" >> report.md
+          echo "| Val   (last epoch) | \`${{ steps.metrics.outputs.val_acc }}\`   | \`${{ steps.metrics.outputs.val_loss }}\`   |" >> report.md
+          echo "| Test  (held-out)   | \`${{ steps.metrics.outputs.test_acc }}\`  | —    |" >> report.md
+          echo "" >> report.md
+          echo "> F1 macro (test): \`${{ steps.metrics.outputs.test_f1 }}\`" >> report.md
+          echo "" >> report.md
+
+          echo "### Changes vs main" >> report.md
+          echo "" >> report.md
+          dvc metrics diff main --md >> report.md 2>/dev/null || \
+            echo "_No previous run on main to compare against._" >> report.md
+          echo "" >> report.md
+
+          echo "### Loss curve" >> report.md
+          echo "" >> report.md
+          if [ -f metrics/loss_curve.png ]; then
+            echo "![Loss curve](./metrics/loss_curve.png)" >> report.md
+          else
+            echo "_loss_curve.png not found_" >> report.md
+          fi
+          echo "" >> report.md
+
+          echo "### Confusion matrix (test set)" >> report.md
+          echo "" >> report.md
+          if [ -f metrics/confusion_matrix.png ]; then
+            echo "![Confusion matrix](./metrics/confusion_matrix.png)" >> report.md
+          else
+            echo "_confusion_matrix.png not found_" >> report.md
+          fi
+
+          cml comment create --publish report.md
+
+      # ── Keep report as artifact ──────────────────────────────
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ml-report
+          path: |
+            report.md
+            metrics/
+            dvclive/
+          retention-days: 30
+
+# =============================================================
+# Job 3 — terminate EC2 runner
+# =============================================================
+  stop-runner:
+    needs: [start-runner, train]
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.start-runner.result == 'success' }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            eu-north-1
+
+      - name: Stop EC2 runner
+        uses: machulav/ec2-github-runner@v2
+        with:
+          mode:            stop
+          github-token:    ${{ secrets.CML_PAT }}
+          label:           ${{ needs.start-runner.outputs.runner-label }}
+          ec2-instance-id: ${{ needs.start-runner.outputs.instance-id }}
