@@ -238,8 +238,6 @@ jobs:
           echo "| Val   (last epoch) | \`${{ steps.metrics.outputs.val_acc }}\`   | \`${{ steps.metrics.outputs.val_loss }}\`   |" >> report.md
           echo "| Test  (held-out)   | \`${{ steps.metrics.outputs.test_acc }}\`  | —    |" >> report.md
           echo "" >> report.md
-          echo "> F1 macro (test): \`${{ steps.metrics.outputs.test_f1 }}\`" >> report.md
-          echo "" >> report.md
 
           echo "### Changes vs main" >> report.md
           echo "" >> report.md
