@@ -119,8 +119,8 @@ stages:
       size: 5262
     - path: src/train.py
       hash: md5
-      md5: 362cb88e2e1a7b62a8d8f8f30e1635c6
-      size: 4925
+      md5: 76ae555f7327dd390ccb0ba7a5ad2dec
+      size: 4956
     params:
       params.yaml:
         base.dropout: 0.3
@@ -138,8 +138,8 @@ stages:
     outs:
     - path: models/model.keras
       hash: md5
-      md5: c7f871c80d4574028942d943111f4c7f
-      size: 5103009
+      md5: f3443597058ed88c48d2b3e54d5bacd0
+      size: 5103023
   evaluate:
     cmd: python src/evaluate.py
     deps:
@@ -153,8 +153,8 @@ stages:
       size: 10128
     - path: models/model.keras
       hash: md5
-      md5: c7f871c80d4574028942d943111f4c7f
-      size: 5103009
+      md5: f3443597058ed88c48d2b3e54d5bacd0
+      size: 5103023
     - path: src/evaluate.py
       hash: md5
       md5: 3f8fbe7ee706f3c79fdcb07480a66ed5
@@ -182,21 +182,21 @@ stages:
     outs:
     - path: metrics/accuracy_curve.png
       hash: md5
-      md5: 1b71f3f0b0a449f365d07958bde6f844
-      size: 133614
+      md5: b6256b484ecfb0159cd2797257a31f4e
+      size: 131775
     - path: metrics/confusion_matrix.csv
       hash: md5
-      md5: d58da41c3718b6c8ef232b712eb99305
-      size: 152751
+      md5: beeebc1d8177e72d8bb1a3af234df6cb
+      size: 152575
     - path: metrics/confusion_matrix.png
       hash: md5
-      md5: d2656d0b5cc937a07a9402e4b3a1a764
-      size: 82444
+      md5: 387d675dcd722630c7ece74016151781
+      size: 82123
     - path: metrics/eval.json
       hash: md5
-      md5: 0869d05c3b7bd62078a0ca0e38480694
+      md5: 3eb1145aceb714484f794c749f3aa37d
       size: 128
     - path: metrics/loss_curve.png
       hash: md5
-      md5: 18404bb89d50d7cf84d25a90a33240e9
-      size: 133674
+      md5: 3801af412edf4ea4e16295571285820c
+      size: 134080
