@@ -15,7 +15,7 @@
 #   CML_PAT
 #
 # CONTAINER:
-#   ghcr.io/m-loay/dvc-cml-mlops:latest
+#   ghcr.io/m-loay/fashion-mnist-mlops:latest
 #   Custom image built by build-image.yml.
 #   Contains: Python 3.12, TensorFlow 2.21.0, DVC, DVCLive,
 #             CML, git, nodejs — all pre-installed.
@@ -250,7 +250,7 @@ jobs:
           echo "### Loss curve" >> report.md
           echo "" >> report.md
           if [ -f metrics/loss_curve.png ]; then
-            cml publish metrics/loss_curve.png --md >> report.md
+            echo "![Loss curve](./metrics/loss_curve.png)" >> report.md
           else
             echo "_loss_curve.png not found_" >> report.md
           fi
@@ -259,12 +259,12 @@ jobs:
           echo "### Confusion matrix (test set)" >> report.md
           echo "" >> report.md
           if [ -f metrics/confusion_matrix.png ]; then
-            cml publish metrics/confusion_matrix.png --md >> report.md
+            echo "![Confusion matrix](./metrics/confusion_matrix.png)" >> report.md
           else
             echo "_confusion_matrix.png not found_" >> report.md
           fi
 
-          cml comment create report.md
+          cml comment create --publish report.md
 
       # ── Keep report as artifact ──────────────────────────────
       - name: Upload report artifact
