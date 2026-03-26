@@ -79,9 +79,12 @@ stages:
         x: predicted
         y: actual
         cache: false
-    - metrics/confusion_matrix.png: {}
-    - metrics/accuracy_curve.png: {}
-    - metrics/loss_curve.png: {}
+    - metrics/confusion_matrix.png:
+        cache: false
+    - metrics/accuracy_curve.png:
+        cache: false
+    - metrics/loss_curve.png:
+        cache: false
 
 # These top-level sections are only needed for files NOT produced by stages.
 # Since your stages already define them, I've cleaned these up.
