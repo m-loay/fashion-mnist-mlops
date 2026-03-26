@@ -59,8 +59,8 @@ preprocess:
 
 # ── Stage: train ──────────────────────────────────────────────
 train:
-  arch_config: configs/cnn_basic.yml
-  epochs: 10
+  arch_config: configs/simple_dense.yml
+  epochs: 1
   batch_size: 64
   lr: 0.001
   optimizer: adam     # adam | sgd | rmsprop
