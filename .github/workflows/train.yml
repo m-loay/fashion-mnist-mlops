@@ -15,21 +15,14 @@
 #   CML_PAT
 #
 # CONTAINER:
-#   ghcr.io/m-loay/fashion-mnist-mlops:latest
-#   Custom image built by build-image.yml.
-#   Contains: Python 3.12, TensorFlow 2.21.0, DVC, DVCLive,
-#             CML, git, nodejs — all pre-installed.
-#   Only dvc remote config + dvc repro needed at runtime.
+#   ghcr.io/m-loay/dvc-cml-mlops:latest
+#   Contains: Python 3.12, CML, git, nodejs.
+#   ML packages installed at runtime from requirements.txt.
 #
 # DESIGN:
 #   Job 1 (start-runner): provisions EC2 spot runner in eu-north-1.
-#                         pre-runner-script installs jq (required by
-#                         the runner download script) and docker.io
-#                         (required to run the container). Both install
-#                         in ~30s — well within the 10min timeout.
-#   Job 2 (train):        runs inside the custom container.
-#                         No pip installs needed — image has everything.
-#   Job 3 (stop-runner):  always terminates EC2 — even if train fails.
+#   Job 2 (train):        runs inside container, executes DVC pipeline.
+#   Job 3 (stop-runner):  always terminates EC2 after train.
 # =============================================================
 
 name: ML Pipeline
@@ -103,7 +96,7 @@ jobs:
             sudo systemctl start docker
 
 # =============================================================
-# Job 2 — run DVC pipeline inside custom container
+# Job 2 — run DVC pipeline inside container
 # =============================================================
   train:
     needs: start-runner
@@ -118,10 +111,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── Install ML dependencies ─────────────────────────────
-      # TensorFlow and other ML packages are installed here at
-      # runtime rather than baked into the image. This keeps the
-      # image small (~400MB) for fast pulls on every EC2 run.
+      # ── Install ML dependencies ──────────────────────────────
       - name: Install ML dependencies
         run: pip install --no-cache-dir -r requirements.txt
 
@@ -135,8 +125,6 @@ jobs:
           dvc pull --run-cache
 
       # ── Run the full pipeline ────────────────────────────────
-      # Stages: load_data → preprocess → train → evaluate
-      # Only changed stages re-run (DVC caching).
       - name: DVC repro
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -168,74 +156,51 @@ jobs:
           import json, os
 
           out = os.environ["GITHUB_OUTPUT"]
+          fmt = lambda v: f"{v:.4f}" if isinstance(v, float) else str(v)
 
-          train_acc = train_loss = val_acc = val_loss = "N/A"
+          train_acc = val_acc = test_acc = test_f1 = "N/A"
+
           try:
               with open("dvclive/metrics.json") as f:
                   live = json.load(f)
-              def get(d, *keys):
-                  for k in keys:
-                      if k in d: return d[k]
-                  return "N/A"
-              train_acc  = get(live, "train_accuracy",  "accuracy")
-              train_loss = get(live, "train_loss",       "loss")
-              val_acc    = get(live, "val_accuracy")
-              val_loss   = get(live, "val_loss")
-              if train_acc == "N/A" and "train" in live:
-                  train_acc  = live["train"].get("accuracy",  "N/A")
-                  train_loss = live["train"].get("loss",      "N/A")
-              if val_acc == "N/A" and "val" in live:
-                  val_acc  = live["val"].get("accuracy", "N/A")
-                  val_loss = live["val"].get("loss",     "N/A")
-              def fmt(v): return f"{v:.4f}" if isinstance(v, float) else str(v)
-              train_acc = fmt(train_acc); train_loss = fmt(train_loss)
-              val_acc   = fmt(val_acc);   val_loss   = fmt(val_loss)
+              train_acc = fmt(live.get("train", "N/A"))
+              val_acc   = fmt(live.get("val",   "N/A"))
           except Exception as e:
-              print(f"dvclive/metrics.json read error: {e}")
+              print(f"dvclive/metrics.json error: {e}")
 
-          test_acc = test_f1 = "N/A"
           try:
               with open("metrics/eval.json") as f:
                   ev = json.load(f)
-              test_acc = ev.get("accuracy", ev.get("test_accuracy", "N/A"))
-              test_f1  = ev.get("f1_macro", ev.get("f1", "N/A"))
-              def fmt(v): return f"{v:.4f}" if isinstance(v, float) else str(v)
-              test_acc = fmt(test_acc); test_f1 = fmt(test_f1)
+              test_acc = fmt(ev.get("accuracy", ev.get("test_accuracy", "N/A")))
+              test_f1  = fmt(ev.get("f1_macro", ev.get("f1", "N/A")))
           except Exception as e:
-              print(f"metrics/eval.json read error: {e}")
+              print(f"metrics/eval.json error: {e}")
 
           with open(out, "a") as f:
               f.write(f"train_acc={train_acc}\n")
-              f.write(f"train_loss={train_loss}\n")
               f.write(f"val_acc={val_acc}\n")
-              f.write(f"val_loss={val_loss}\n")
               f.write(f"test_acc={test_acc}\n")
+              f.write(f"test_f1={test_f1}\n")
 
-          print(f"train  acc={train_acc}  loss={train_loss}")
-          print(f"val    acc={val_acc}    loss={val_loss}")
-          print(f"test   acc={test_acc}   f1={test_f1}")
+          print(f"train={train_acc} val={val_acc} test={test_acc} f1={test_f1}")
           PYEOF
 
-      # ── Build and post CML report ────────────────────────────
+      # ── Post CML report ──────────────────────────────────────
       - name: Post CML report
         if: always()
         env:
           REPO_TOKEN: ${{ secrets.CML_PAT }}
-          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           echo "## ML Pipeline Report" >> report.md
           echo "" >> report.md
-          echo "**Runner:** EC2 \`${{ inputs.instance_type || 't3.small' }}\` spot (eu-north-1)" >> report.md
-          echo "" >> report.md
 
-          echo "### Accuracy" >> report.md
+          echo "### Metrics" >> report.md
           echo "" >> report.md
-          echo "| Split | Accuracy | Loss |" >> report.md
-          echo "|-------|----------|------|" >> report.md
-          echo "| Train (last epoch) | \`${{ steps.metrics.outputs.train_acc }}\` | \`${{ steps.metrics.outputs.train_loss }}\` |" >> report.md
-          echo "| Val   (last epoch) | \`${{ steps.metrics.outputs.val_acc }}\`   | \`${{ steps.metrics.outputs.val_loss }}\`   |" >> report.md
-          echo "| Test  (held-out)   | \`${{ steps.metrics.outputs.test_acc }}\`  | —    |" >> report.md
+          echo "| Split | Accuracy | F1 Macro |" >> report.md
+          echo "|-------|----------|----------|" >> report.md
+          echo "| Train | \`${{ steps.metrics.outputs.train_acc }}\` | — |" >> report.md
+          echo "| Val   | \`${{ steps.metrics.outputs.val_acc }}\`   | — |" >> report.md
+          echo "| Test  | \`${{ steps.metrics.outputs.test_acc }}\`  | \`${{ steps.metrics.outputs.test_f1 }}\` |" >> report.md
           echo "" >> report.md
 
           echo "### Changes vs main" >> report.md
@@ -244,27 +209,15 @@ jobs:
             echo "_No previous run on main to compare against._" >> report.md
           echo "" >> report.md
 
-          echo "### Loss curve" >> report.md
-          echo "" >> report.md
-          if [ -f metrics/loss_curve.png ]; then
-            echo "![Loss curve](./metrics/loss_curve.png)" >> report.md
-          else
-            echo "_loss_curve.png not found_" >> report.md
-          fi
-          echo "" >> report.md
+          echo "### Plots" >> report.md
+          echo "Download the **ml-report** artifact from this run to view:" >> report.md
+          echo "- \`metrics/loss_curve.png\`" >> report.md
+          echo "- \`metrics/confusion_matrix.png\`" >> report.md
 
-          echo "### Confusion matrix (test set)" >> report.md
-          echo "" >> report.md
-          if [ -f metrics/confusion_matrix.png ]; then
-            echo "![Confusion matrix](./metrics/confusion_matrix.png)" >> report.md
-          else
-            echo "_confusion_matrix.png not found_" >> report.md
-          fi
+          cml comment create report.md
 
-          cml comment create --publish report.md
-
-      # ── Keep report as artifact ──────────────────────────────
-      - name: Upload report artifact
+      # ── Upload artifacts ─────────────────────────────────────
+      - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
