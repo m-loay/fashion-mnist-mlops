@@ -131,6 +131,7 @@ jobs:
         run: dvc repro
 
       - name: DVC push to S3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -275,7 +276,7 @@ jobs:
           echo "PR comment posted successfully."
 
       - name: Upload artifacts
-        if: always()
+        if: always() && (github.event_name == 'push' && github.ref == 'refs/heads/main')
         uses: actions/upload-artifact@v4
         with:
           name: ml-report
