@@ -211,7 +211,10 @@ jobs:
             echo "![Confusion Matrix](data:image/png;base64,$(base64 -w 0 metrics/confusion_matrix.png))" >> report.md
           fi
 
-          cml comment create report.md
+          # Use GitHub API directly — bypasses CML's broken image upload
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --body-file report.md \
+            --repo ${{ github.repository }}
 
       - name: Upload artifacts
         if: always()
