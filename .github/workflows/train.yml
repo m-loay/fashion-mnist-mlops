@@ -122,7 +122,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
           dvc remote modify s3remote region eu-north-1
-          dvc pull --run-cache
+          dvc pull data/          # always pull dataset
+          dvc pull --run-cache    # always pull run-cache (enables skip-if-cached)
 
       - name: Untrack metrics outputs from git
         run: |
@@ -139,7 +140,12 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        run: dvc push
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            dvc push              # main: save model + logs + run-cache
+          else
+            dvc push --run-cache  # PR: save only run-cache (cheap, enables cache hits)
+          fi
 
       - name: Commit pipeline outputs
         run: |
