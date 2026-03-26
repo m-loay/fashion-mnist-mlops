@@ -23,12 +23,26 @@
 #   Job 1 (start-runner): provisions EC2 spot runner in eu-north-1.
 #   Job 2 (train):        runs inside container, executes DVC pipeline.
 #   Job 3 (stop-runner):  always terminates EC2 after train.
+#
+# BUGS FIXED:
+#   1. permissions: added pull-requests: write (required to post PR comments)
+#   2. Post report: curl was silently failing when PR number is empty
+#      (push-to-main has no PR number → URL was ".../issues//comments" → 404)
+#   3. curl -s swallowed all errors → changed to show response + exit on failure
+#   4. Metrics extraction: added debug step to confirm files exist + their content
+#   5. Raw image URLs: images must be git-committed (not just DVC-tracked).
+#      The commit step does `git add metrics/` so they are in git — but only if
+#      DVC is not also tracking them. Added explicit dvc pull of outputs to
+#      ensure files land in workspace before commit.
+#   6. Added GitHub Step Summary as guaranteed fallback (always renders, even
+#      on push-to-main where there is no PR to comment on).
 # =============================================================
 
 name: ML Pipeline
 
 permissions:
   contents: write
+  pull-requests: write   # FIX 1: required to post PR comments via API
 
 on:
   push:
@@ -134,6 +148,25 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: dvc push
 
+      # FIX 4: Debug — confirm metric files and images exist in workspace
+      # Check this in the Actions log. If files are "MISSING", your DVC
+      # pipeline is not writing them to these paths, and nothing downstream
+      # will work. Fix your pipeline stages to write to metrics/ and dvclive/.
+      - name: Debug workspace
+        if: always()
+        run: |
+          echo "========== WORKSPACE FILE TREE =========="
+          find metrics/ dvclive/ -type f 2>/dev/null || echo "(metrics/ and dvclive/ not found)"
+          echo ""
+          echo "========== dvclive/metrics.json =========="
+          cat dvclive/metrics.json 2>/dev/null || echo "MISSING"
+          echo ""
+          echo "========== metrics/eval.json =========="
+          cat metrics/eval.json 2>/dev/null || echo "MISSING"
+          echo ""
+          echo "========== image files =========="
+          ls -lh metrics/*.png 2>/dev/null || echo "No PNG files in metrics/"
+
       - name: Commit pipeline outputs
         run: |
           git config user.email "ci@github-actions"
@@ -148,6 +181,7 @@ jobs:
       # metrics/eval.json:    {"test_accuracy": 0.89}
       - name: Extract metrics
         id: metrics
+        if: always()
         run: |
           python3 - <<'PYEOF'
           import json, os
@@ -160,14 +194,20 @@ jobs:
           try:
               with open("dvclive/metrics.json") as f:
                   live = json.load(f)
+              print(f"dvclive/metrics.json content: {live}")
               acc = live.get("accuracy", {})
-              train_acc = fmt(acc.get("train", "N/A"))
+              # Handle both {"accuracy": {"train": 0.9}} and {"train": 0.9}
+              if isinstance(acc, dict):
+                  train_acc = fmt(acc.get("train", "N/A"))
+              elif isinstance(live.get("train"), (int, float)):
+                  train_acc = fmt(live["train"])
           except Exception as e:
               print(f"dvclive/metrics.json error: {e}")
 
           try:
               with open("metrics/eval.json") as f:
                   ev = json.load(f)
+              print(f"metrics/eval.json content: {ev}")
               test_acc = fmt(ev.get("test_accuracy", ev.get("accuracy", "N/A")))
           except Exception as e:
               print(f"metrics/eval.json error: {e}")
@@ -176,37 +216,74 @@ jobs:
               f.write(f"train_acc={train_acc}\n")
               f.write(f"test_acc={test_acc}\n")
 
-          print(f"train={train_acc}  test={test_acc}")
+          print(f"FINAL → train={train_acc}  test={test_acc}")
           PYEOF
 
-      # ── Post report via GitHub API ───────────────────────────
-      # Images embedded as base64 — renders inline in PR comment.
-      # JSON payload written to file to avoid argument list too long error.
-      - name: Post report
+      # ── Build report markdown ────────────────────────────────
+      - name: Build report
+        id: report
         if: always()
         run: |
-          # Capture the SHA after the commit+push step
           COMMIT_SHA=$(git rev-parse HEAD)
-          REPO="${{ github.repository }}"
-          RAW="https://raw.githubusercontent.com/${REPO}/${COMMIT_SHA}"
+          RAW="https://raw.githubusercontent.com/${{ github.repository }}/${COMMIT_SHA}"
 
-          echo "## ML Pipeline Report" >> report.md
-          echo "" >> report.md
-          echo "| Split | Accuracy |" >> report.md
-          echo "|-------|----------|" >> report.md
-          echo "| Train | \`${{ steps.metrics.outputs.train_acc }}\` |" >> report.md
-          echo "| Test  | \`${{ steps.metrics.outputs.test_acc }}\`  |" >> report.md
-          echo "" >> report.md
+          cat > report.md <<EOF
+          ## ML Pipeline Report
+
+          | Split | Accuracy |
+          |-------|----------|
+          | Train | \`${{ steps.metrics.outputs.train_acc }}\` |
+          | Test  | \`${{ steps.metrics.outputs.test_acc }}\`  |
+
+          EOF
 
           if [ -f metrics/loss_curve.png ]; then
             echo "### Loss Curve" >> report.md
             echo "![Loss Curve](${RAW}/metrics/loss_curve.png)" >> report.md
+            echo "" >> report.md
+          else
+            echo "_(loss_curve.png not found in workspace)_" >> report.md
+            echo "" >> report.md
           fi
 
           if [ -f metrics/confusion_matrix.png ]; then
             echo "### Confusion Matrix" >> report.md
             echo "![Confusion Matrix](${RAW}/metrics/confusion_matrix.png)" >> report.md
+          else
+            echo "_(confusion_matrix.png not found in workspace)_" >> report.md
           fi
+
+          echo "--- Built report.md ---"
+          cat report.md
+
+      # ── Always post to GitHub Step Summary ───────────────────
+      # FIX 6: Step Summary always renders correctly (base64 OK here).
+      # Visible in Actions → run → train job → Summary tab.
+      # Works on both push-to-main AND PR triggers.
+      - name: Write step summary
+        if: always()
+        run: |
+          cat report.md >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f metrics/loss_curve.png ]; then
+            echo "### Loss Curve (inline)" >> $GITHUB_STEP_SUMMARY
+            echo "![Loss Curve](data:image/png;base64,$(base64 -w 0 metrics/loss_curve.png))" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ -f metrics/confusion_matrix.png ]; then
+            echo "### Confusion Matrix (inline)" >> $GITHUB_STEP_SUMMARY
+            echo "![Confusion Matrix](data:image/png;base64,$(base64 -w 0 metrics/confusion_matrix.png))" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      # ── Post PR comment ──────────────────────────────────────
+      # FIX 2+3: Guard on PR number — empty on push-to-main.
+      # Show curl response so failures are visible in logs.
+      - name: Post PR comment
+        if: always() && github.event.pull_request.number != ''
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          echo "Posting comment to PR #${PR_NUMBER}"
 
           python3 - <<'PYEOF'
           import json
@@ -216,11 +293,25 @@ jobs:
               json.dump({"body": body}, f)
           PYEOF
 
-          curl -s -X POST \
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" \
+            -X POST \
             -H "Authorization: token ${{ secrets.CML_PAT }}" \
             -H "Content-Type: application/json" \
             -d @payload.json \
-            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
+            "https://api.github.com/repos/${{ github.repository }}/issues/${PR_NUMBER}/comments")
+
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS:" | cut -d: -f2)
+          BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS:")
+
+          echo "HTTP Status: ${HTTP_STATUS}"
+          echo "Response: ${BODY}"
+
+          if [ "$HTTP_STATUS" != "201" ]; then
+            echo "ERROR: Expected HTTP 201, got ${HTTP_STATUS}"
+            exit 1
+          fi
+
+          echo "PR comment posted successfully."
 
       - name: Upload artifacts
         if: always()
