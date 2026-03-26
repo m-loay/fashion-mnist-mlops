@@ -143,8 +143,9 @@ jobs:
           git add dvc.lock dvclive/
           git add -f metrics/*.png          # force-add despite .gitignore
           git add metrics/eval.json         # add json too if needed
+          TRIGGER_MSG="${{ github.event.head_commit.message || github.event.pull_request.title }}"
           git diff --staged --quiet || \
-            git commit -m "ci: update pipeline outputs [skip ci]"
+            git commit -m "${TRIGGER_MSG} [update] [skip ci]"
           git push origin HEAD:${{ github.head_ref || github.ref_name }}
 
       - name: Extract metrics
