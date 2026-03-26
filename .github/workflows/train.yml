@@ -111,6 +111,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          token: ${{ secrets.CML_PAT }}
           fetch-depth: 0
 
       - name: Install ML dependencies
@@ -121,8 +122,8 @@ jobs:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          dvc remote modify s3remote region eu-north-1
-          dvc pull --run-cache
+          dvc remote modify --local s3remote region eu-north-1
+          dvc fetch --run-cache
           dvc pull data/raw data/processed
 
       - name: Untrack metrics outputs from git
@@ -135,17 +136,19 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: dvc repro
 
-      - name: DVC push to S3
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: DVC push run-cache
+        if: github.event_name == 'pull_request'
         env:
           AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        run: |
-          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            dvc push              # main: save model + logs + run-cache
-          else
-            dvc push --run-cache  # PR: save only run-cache (cheap, enables cache hits)
-          fi
+        run: dvc push
+
+      - name: DDVC push all artifacts (main + manual dispatch)
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: dvc push
 
       - name: Commit pipeline outputs
         run: |
@@ -252,7 +255,7 @@ jobs:
           fi
 
       - name: Post PR comment
-        if: always() && github.event.pull_request.number != ''
+        if: always() && github.event_name == 'pull_request'
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"
           echo "Posting comment to PR #${PR_NUMBER}"
