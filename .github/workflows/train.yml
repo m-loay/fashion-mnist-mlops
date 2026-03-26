@@ -181,10 +181,15 @@ jobs:
 
       # ── Post report via GitHub API ───────────────────────────
       # Images embedded as base64 — renders inline in PR comment.
-      # Uses curl + GitHub API directly — no cml publish, no Cloudflare.
+      # JSON payload written to file to avoid argument list too long error.
       - name: Post report
         if: always()
         run: |
+          # Capture the SHA after the commit+push step
+          COMMIT_SHA=$(git rev-parse HEAD)
+          REPO="${{ github.repository }}"
+          RAW="https://raw.githubusercontent.com/${REPO}/${COMMIT_SHA}"
+
           echo "## ML Pipeline Report" >> report.md
           echo "" >> report.md
           echo "| Split | Accuracy |" >> report.md
@@ -195,20 +200,26 @@ jobs:
 
           if [ -f metrics/loss_curve.png ]; then
             echo "### Loss Curve" >> report.md
-            echo "![Loss Curve](data:image/png;base64,$(base64 -w 0 metrics/loss_curve.png))" >> report.md
-            echo "" >> report.md
+            echo "![Loss Curve](${RAW}/metrics/loss_curve.png)" >> report.md
           fi
 
           if [ -f metrics/confusion_matrix.png ]; then
             echo "### Confusion Matrix" >> report.md
-            echo "![Confusion Matrix](data:image/png;base64,$(base64 -w 0 metrics/confusion_matrix.png))" >> report.md
+            echo "![Confusion Matrix](${RAW}/metrics/confusion_matrix.png)" >> report.md
           fi
 
-          BODY=$(cat report.md)
+          python3 - <<'PYEOF'
+          import json
+          with open("report.md") as f:
+              body = f.read()
+          with open("payload.json", "w") as f:
+              json.dump({"body": body}, f)
+          PYEOF
+
           curl -s -X POST \
             -H "Authorization: token ${{ secrets.CML_PAT }}" \
             -H "Content-Type: application/json" \
-            -d "{\"body\": $(echo "$BODY" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}" \
+            -d @payload.json \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
 
       - name: Upload artifacts
