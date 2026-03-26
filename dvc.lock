@@ -93,10 +93,10 @@ stages:
   train:
     cmd: python src/train.py
     deps:
-    - path: configs/simple_dense.yml
+    - path: configs/cnn_basic.yml
       hash: md5
-      md5: ed2f11c8a9c368e40bb42d25a5d6b733
-      size: 327
+      md5: 3c187a86e8035f84428bb1c8fa2d4482
+      size: 503
     - path: data/processed/X_train.npy
       hash: md5
       md5: f838577d7d5c9fd940e338c8a837bba0
@@ -130,7 +130,7 @@ stages:
         paths.models_dir: models
         paths.processed_dir: data/processed
         train:
-          arch_config: configs/simple_dense.yml
+          arch_config: configs/cnn_basic.yml
           epochs: 9
           batch_size: 64
           lr: 0.001
@@ -138,8 +138,8 @@ stages:
     outs:
     - path: models/model.keras
       hash: md5
-      md5: 018d20b7be270fd24a51d732055186b6
-      size: 1347776
+      md5: c4d25f830b9bc3eb631c041a1fd99814
+      size: 5103023
   evaluate:
     cmd: python src/evaluate.py
     deps:
@@ -153,8 +153,8 @@ stages:
       size: 10128
     - path: models/model.keras
       hash: md5
-      md5: 018d20b7be270fd24a51d732055186b6
-      size: 1347776
+      md5: c4d25f830b9bc3eb631c041a1fd99814
+      size: 5103023
     - path: src/evaluate.py
       hash: md5
       md5: 3f8fbe7ee706f3c79fdcb07480a66ed5
@@ -182,21 +182,21 @@ stages:
     outs:
     - path: metrics/accuracy_curve.png
       hash: md5
-      md5: b5b10ed602eab608b5084b75f20317b5
-      size: 134931
+      md5: e827cb1daeb002df96a590c1f8c36a97
+      size: 136895
     - path: metrics/confusion_matrix.csv
       hash: md5
-      md5: 2872ee3ce7552ecbe63349606ac93612
-      size: 152355
+      md5: 93005a7f2372b5344711cb38e81aeb16
+      size: 153343
     - path: metrics/confusion_matrix.png
       hash: md5
-      md5: 66d43de4587616573f32f8d227b89ecd
-      size: 84425
+      md5: 1e0c0231210b4bff4190b4254cf06254
+      size: 82818
     - path: metrics/eval.json
       hash: md5
-      md5: caeaf742d30c108b40476ab2e2dfa3c1
+      md5: 2d9bd7f3358646256bfeb66e4c68d0a9
       size: 128
     - path: metrics/loss_curve.png
       hash: md5
-      md5: a9026012c40585ce79e5f0f64061fb63
-      size: 132150
+      md5: 5740b095e03c58a6d632647bf6492bcf
+      size: 135529
