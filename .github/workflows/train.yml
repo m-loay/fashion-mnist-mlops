@@ -15,18 +15,20 @@
 #   CML_PAT
 #
 # CONTAINER:
-#   ghcr.io/iterative/cml:0-dvc3-base1
-#   Pre-installed: Python, DVC 3.x, CML, git, nodejs.
-#   Only project requirements.txt is installed on top.
+#   ghcr.io/m-loay/dvc-cml-mlops:latest
+#   Custom image built by build-image.yml.
+#   Contains: Python 3.12, TensorFlow 2.21.0, DVC, DVCLive,
+#             CML, git, nodejs — all pre-installed.
+#   Only dvc remote config + dvc repro needed at runtime.
 #
 # DESIGN:
 #   Job 1 (start-runner): provisions EC2 spot runner in eu-north-1.
 #                         pre-runner-script installs jq (required by
-#                         runner download script) and docker.io (required
-#                         to run the container in Job 2). Both install
+#                         the runner download script) and docker.io
+#                         (required to run the container). Both install
 #                         in ~30s — well within the 10min timeout.
-#   Job 2 (train):        runs inside ghcr.io/iterative/cml:0-dvc3-base1.
-#                         No dependency installs except requirements.txt.
+#   Job 2 (train):        runs inside the custom container.
+#                         No pip installs needed — image has everything.
 #   Job 3 (stop-runner):  always terminates EC2 — even if train fails.
 # =============================================================
 
@@ -101,28 +103,20 @@ jobs:
             sudo systemctl start docker
 
 # =============================================================
-# Job 2 — run DVC pipeline inside iterative container
+# Job 2 — run DVC pipeline inside custom container
 # =============================================================
   train:
     needs: start-runner
     runs-on: ${{ needs.start-runner.outputs.runner-label }}
     timeout-minutes: 90
     container:
-      image: ghcr.io/iterative/cml:0-dvc3-base1
+      image: ghcr.io/m-loay/dvc-cml-mlops:latest
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      # ── Install project requirements ─────────────────────────
-      # Container already has Python, DVC 3.x, CML, git, nodejs.
-      # Only project-specific packages need installing.
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
 
       # ── Pull cached data + models from S3 ───────────────────
       - name: DVC pull from S3
@@ -279,7 +273,6 @@ jobs:
 
 # =============================================================
 # Job 3 — terminate EC2 runner
-# if: always() ensures EC2 is never left running after failure.
 # =============================================================
   stop-runner:
     needs: [start-runner, train]

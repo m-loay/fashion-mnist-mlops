@@ -1,0 +1,55 @@
+# =============================================================
+# .github/workflows/build-image.yml
+#
+# Builds and pushes the ML training Docker image to ghcr.io.
+#
+# TRIGGERS:
+#   - Push to main when requirements.txt or Dockerfile changes
+#   - Manual dispatch (force rebuild)
+#
+# IMAGE:
+#   ghcr.io/m-loay/dvc-cml-mlops:latest
+#
+# PERMISSIONS:
+#   packages: write  — required to push to ghcr.io
+#   contents: read   — required to checkout the repo
+# =============================================================
+
+name: Build Training Image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "requirements.txt"
+      - "docker/Dockerfile"
+
+  workflow_dispatch:   # manual trigger to force a rebuild
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ghcr.io/m-loay/dvc-cml-mlops:latest
