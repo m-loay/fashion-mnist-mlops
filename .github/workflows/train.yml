@@ -118,6 +118,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      # ── Install ML dependencies ─────────────────────────────
+      # TensorFlow and other ML packages are installed here at
+      # runtime rather than baked into the image. This keeps the
+      # image small (~400MB) for fast pulls on every EC2 run.
+      - name: Install ML dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
       # ── Pull cached data + models from S3 ───────────────────
       - name: DVC pull from S3
         env:
