@@ -38,6 +38,7 @@ def main():
     train_params = cfg.stage("train")
 
     # Paths from config
+    print("Loading config...")
     processed_dir: Path = cfg.paths["processed_dir"]
     models_dir: Path = cfg.paths["models_dir"]
     dvclive_dir: Path = cfg.paths["dvclive_dir"]
