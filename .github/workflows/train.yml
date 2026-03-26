@@ -181,7 +181,7 @@ jobs:
 
       # ── Post report via GitHub API ───────────────────────────
       # Images embedded as base64 — renders inline in PR comment.
-      # Uses curl + GitHub API directly — no cml publish, no Cloudflare.
+      # JSON payload written to file to avoid argument list too long error.
       - name: Post report
         if: always()
         run: |
@@ -204,11 +204,18 @@ jobs:
             echo "![Confusion Matrix](data:image/png;base64,$(base64 -w 0 metrics/confusion_matrix.png))" >> report.md
           fi
 
-          BODY=$(cat report.md)
+          python3 - <<'PYEOF'
+          import json
+          with open("report.md") as f:
+              body = f.read()
+          with open("payload.json", "w") as f:
+              json.dump({"body": body}, f)
+          PYEOF
+
           curl -s -X POST \
             -H "Authorization: token ${{ secrets.CML_PAT }}" \
             -H "Content-Type: application/json" \
-            -d "{\"body\": $(echo "$BODY" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}" \
+            -d @payload.json \
             "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments"
 
       - name: Upload artifacts
